@@ -9,8 +9,21 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $dataRoot = Join-Path $env:LOCALAPPDATA "CodexFeishuLocal"
 $secretPath = Join-Path $dataRoot "feishu-secret.dpapi"
 $envPath = Join-Path $repoRoot ".env.local"
-$codexCommand = (Get-Command codex.exe -ErrorAction Stop).Source
 $workspace = "C:\Users\cai\Desktop\linux"
+$codexHome = Join-Path $dataRoot "codex-home"
+$desktopCodexBins = Get-ChildItem `
+  -LiteralPath (Join-Path $env:LOCALAPPDATA "OpenAI\Codex\bin") `
+  -Filter codex.exe `
+  -File `
+  -Recurse `
+  -ErrorAction SilentlyContinue |
+  Sort-Object LastWriteTime -Descending
+$codexCommand = if ($desktopCodexBins) {
+  $desktopCodexBins[0].FullName
+}
+else {
+  (Get-Command codex.exe -ErrorAction Stop).Source
+}
 
 New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $dataRoot "artifacts") | Out-Null
@@ -21,10 +34,14 @@ $secret | ConvertFrom-SecureString | Set-Content -Encoding ASCII -LiteralPath $s
 $lines = @(
   "HOST=127.0.0.1"
   "PORT=3100"
+  "LOG_LEVEL=warn"
   "DEFAULT_WORKSPACE=$workspace"
   "CODEX_ARTIFACTS_DIR=$dataRoot\artifacts"
   "RUNTIME_STATE_FILE=$dataRoot\runtime-state.json"
-  "LIVE_UPDATE_DEBOUNCE_MS=1200"
+  "RUNTIME_STATE_DEBOUNCE_MS=3000"
+  "LIVE_UPDATE_DEBOUNCE_MS=1800"
+  "CODEX_HOME=$codexHome"
+  "CODEX_HOME_SOURCE=$env:USERPROFILE\.codex"
   "CODEX_MODE=app-server"
   "CODEX_APP_SERVER_COMMAND=$codexCommand"
   "CODEX_APP_SERVER_ARGS=app-server"

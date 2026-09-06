@@ -37,6 +37,7 @@ const envBoolean = (defaultValue: boolean) =>
 const envSchema = z.object({
   HOST: z.string().default("0.0.0.0"),
   PORT: z.coerce.number().int().positive().default(3000),
+  LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
   CODEX_MODE: z.enum(["mock", "app-server"]).default("mock"),
   CODEX_APP_SERVER_COMMAND: z.string().default("codex"),
   CODEX_APP_SERVER_ARGS: z.string().default("app-server"),
@@ -52,6 +53,7 @@ const envSchema = z.object({
   DEFAULT_WORKSPACE: z.string().default(process.cwd()),
   CODEX_ARTIFACTS_DIR: z.string().default(".codex-local/artifacts"),
   RUNTIME_STATE_FILE: z.string().default(".codex-feishu-bot/runtime-state.json"),
+  RUNTIME_STATE_DEBOUNCE_MS: z.coerce.number().int().positive().default(1000),
   LIVE_UPDATE_DEBOUNCE_MS: z.coerce.number().int().positive().default(1200),
   FEISHU_PROVIDER: z.enum(["sdk", "fake"]).default("sdk"),
   FEISHU_TRANSPORT: z.enum(["websocket", "webhook", "disabled"]).default("websocket"),

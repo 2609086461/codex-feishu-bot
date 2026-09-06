@@ -67,12 +67,15 @@ export interface AppRuntime {
 
 export function buildAppRuntime(env: Env): AppRuntime {
   const app = Fastify({
-    logger: true
+    logger: {
+      level: env.LOG_LEVEL
+    }
   });
 
   const runtimeStatePersister = new RuntimeStatePersister(
     env.RUNTIME_STATE_FILE,
-    app.log
+    app.log,
+    env.RUNTIME_STATE_DEBOUNCE_MS
   );
   let sessionStore: SessionStore;
   let runStore: RunStore;

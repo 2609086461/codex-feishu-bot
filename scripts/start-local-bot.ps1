@@ -21,6 +21,39 @@ Get-Content -Encoding UTF8 -LiteralPath $envPath | ForEach-Object {
   }
 }
 
+$desktopCodexBins = Get-ChildItem `
+  -LiteralPath (Join-Path $env:LOCALAPPDATA "OpenAI\Codex\bin") `
+  -Filter codex.exe `
+  -File `
+  -Recurse `
+  -ErrorAction SilentlyContinue |
+  Sort-Object LastWriteTime -Descending
+if ($desktopCodexBins) {
+  [Environment]::SetEnvironmentVariable(
+    "CODEX_APP_SERVER_COMMAND",
+    $desktopCodexBins[0].FullName,
+    "Process"
+  )
+}
+
+$codexHome = [Environment]::GetEnvironmentVariable("CODEX_HOME", "Process")
+$codexHomeSource = [Environment]::GetEnvironmentVariable("CODEX_HOME_SOURCE", "Process")
+if ($codexHome -and $codexHomeSource) {
+  $python = Get-Command python.exe -ErrorAction SilentlyContinue
+  if (-not $python) {
+    $python = Get-Command py.exe -ErrorAction Stop
+  }
+  $initializer = Join-Path $PSScriptRoot "initialize-local-codex-home.py"
+  $pythonArgs = @($initializer, "--source", $codexHomeSource, "--target", $codexHome)
+  if ($python.Name -ieq "py.exe") {
+    $pythonArgs = @("-3") + $pythonArgs
+  }
+  & $python.Source @pythonArgs
+  if ($LASTEXITCODE -ne 0) {
+    throw "Failed to initialize isolated Codex home."
+  }
+}
+
 $encryptedSecret = (Get-Content -Raw -Encoding ASCII -LiteralPath $secretPath).Trim()
 $secureSecret = $encryptedSecret | ConvertTo-SecureString
 $secretPtr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureSecret)
