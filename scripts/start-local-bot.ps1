@@ -1,4 +1,7 @@
 $ErrorActionPreference = "Stop"
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+[Console]::OutputEncoding = $utf8
+$OutputEncoding = $utf8
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $envPath = Join-Path $repoRoot ".env.local"
 $secretPath = Join-Path $env:LOCALAPPDATA "CodexFeishuLocal\feishu-secret.dpapi"
