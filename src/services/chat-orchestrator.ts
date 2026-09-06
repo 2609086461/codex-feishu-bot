@@ -81,6 +81,10 @@ export class ChatOrchestrator {
     }
 
     const existingSession = this.sessionStore.get(message.chatId);
+    if (this.isInterruptCommand(message.text)) {
+      void this.interruptActiveTurn(existingSession, message);
+      return;
+    }
     const numericSelection = message.text.trim().match(/^\d+$/);
     const pendingNavigationAt = existingSession?.pendingNavigation?.createdAt
       ? Date.parse(existingSession.pendingNavigation.createdAt)
@@ -311,6 +315,55 @@ export class ChatOrchestrator {
     }
 
     await this.handleMessage(message);
+  }
+
+  private async interruptActiveTurn(
+    initialSession: ReturnType<SessionStore["get"]>,
+    message: IncomingChatMessage
+  ): Promise<void> {
+    if (!initialSession?.activeRunId) {
+      await this.deliveryService.sendText(message.chatId, "当前没有正在运行的任务。");
+      return;
+    }
+    if (!this.codexWorker.interruptTurn) {
+      await this.deliveryService.sendText(message.chatId, "当前 Codex 运行模式不支持中断任务。");
+      return;
+    }
+
+    let session = initialSession;
+    for (let attempt = 0; attempt < 30 && session.activeRunId && !session.activeTurnId; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      session = this.sessionStore.get(message.chatId) ?? session;
+    }
+
+    if (!session.activeRunId) {
+      await this.deliveryService.sendText(message.chatId, "任务已经结束，无需暂停。");
+      return;
+    }
+    if (!session.activeTurnId) {
+      await this.deliveryService.sendText(message.chatId, "任务仍在启动，暂时无法中断，请稍后再发送“暂停”。");
+      return;
+    }
+
+    try {
+      await this.codexWorker.interruptTurn({
+        threadId: session.threadId,
+        turnId: session.activeTurnId
+      });
+      await this.deliveryService.sendText(message.chatId, "已中断当前任务。");
+    } catch (error) {
+      const errorText = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        {
+          chatId: message.chatId,
+          threadId: session.threadId,
+          turnId: session.activeTurnId,
+          error: errorText
+        },
+        "中断 Codex turn 失败"
+      );
+      await this.deliveryService.sendText(message.chatId, `暂停任务失败：${errorText}`);
+    }
   }
 
   getDebugState() {
@@ -997,5 +1050,9 @@ export class ChatOrchestrator {
 
     this.seenIncomingMessages.set(key, now);
     return false;
+  }
+
+  private isInterruptCommand(text: string): boolean {
+    return /^(?:暂停|停止|终止|取消)(?:一下|任务|当前任务)?[。！!]?$/u.test(text.trim());
   }
 }

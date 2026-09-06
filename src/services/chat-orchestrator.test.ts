@@ -184,6 +184,83 @@ test("ChatOrchestrator steers into the active turn instead of creating a new que
   assert.equal(runStore.list()[0]?.sourceMessageId, "om_group_steer_1");
 });
 
+test("ChatOrchestrator interrupts an active turn for an explicit pause command", async () => {
+  const sessionStore = new SessionStore();
+  const runStore = new RunStore();
+  const conversationStore = new ConversationStore();
+  const projector = new MessageProjector(runStore, conversationStore);
+  const existingRun = runStore.create({
+    chatId: "oc_group_1",
+    threadId: "thread_active_1",
+    sourceMessageId: "om_original_1"
+  });
+  sessionStore.save({
+    chatId: "oc_group_1",
+    threadId: "thread_active_1",
+    workspaceId: "/workspace",
+    activeRunId: existingRun.runId,
+    activeTurnId: "turn_active_1",
+    updatedAt: new Date().toISOString()
+  });
+  let interruptCalls = 0;
+  let steerCalls = 0;
+  let runTurnCalls = 0;
+  let reply = "";
+  let resolveInterrupt: (() => void) | undefined;
+  const interrupted = new Promise<void>((resolve) => {
+    resolveInterrupt = resolve;
+  });
+
+  const codexWorker: CodexWorker = {
+    async ensureThread() {
+      return "thread_active_1";
+    },
+    async steerTurn() {
+      steerCalls += 1;
+    },
+    async interruptTurn(context) {
+      interruptCalls += 1;
+      assert.equal(context.threadId, "thread_active_1");
+      assert.equal(context.turnId, "turn_active_1");
+      resolveInterrupt?.();
+    },
+    async *runTurn(): AsyncGenerator<CodexEvent> {
+      runTurnCalls += 1;
+    }
+  };
+
+  const orchestrator = new ChatOrchestrator(
+    sessionStore,
+    runStore,
+    conversationStore,
+    {
+      schedule() {
+        return undefined;
+      },
+      async sendText(_chatId: string, content: string) {
+        reply = content;
+        return "om_pause_reply";
+      },
+      async flushRun() {
+        return undefined;
+      }
+    } as never,
+    projector,
+    codexWorker,
+    "/workspace",
+    createLogger()
+  );
+
+  orchestrator.enqueue(createMessage({ messageId: "om_pause_1", text: "暂停" }));
+  await interrupted;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(interruptCalls, 1);
+  assert.equal(steerCalls, 0);
+  assert.equal(runTurnCalls, 0);
+  assert.equal(reply, "已中断当前任务。");
+});
+
 test("ChatOrchestrator ignores app-sent group messages to avoid loops", async () => {
   const sessionStore = new SessionStore();
   const runStore = new RunStore();

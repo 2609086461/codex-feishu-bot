@@ -539,6 +539,32 @@ export class CodexAppServerWorker implements CodexWorker {
     }
   }
 
+  async interruptTurn(context: { threadId: string; turnId: string }): Promise<void> {
+    await this.start();
+
+    const connection = new AppServerWsConnection(this.env.CODEX_APP_SERVER_LISTEN_URL, {
+      logger: this.logger,
+      label: "interrupt-turn"
+    });
+    await connection.connect();
+
+    try {
+      await connection.request("turn/interrupt", {
+        threadId: context.threadId,
+        turnId: context.turnId
+      });
+      this.logger?.info(
+        {
+          threadId: context.threadId,
+          turnId: context.turnId
+        },
+        "Codex turn/interrupt 成功"
+      );
+    } finally {
+      await connection.close();
+    }
+  }
+
   async *runTurn(
     context: CodexTurnContext & { threadId: string }
   ): AsyncGenerator<CodexEvent> {

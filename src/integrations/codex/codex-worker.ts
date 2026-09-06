@@ -20,5 +20,6 @@ export interface CodexWorker {
   listWorkspaceProjects?(): Promise<CodexWorkspaceProject[]>;
   ensureThread(context: CodexTurnContext): Promise<string>;
   steerTurn?(context: CodexTurnContext & { threadId: string; turnId: string }): Promise<void>;
+  interruptTurn?(context: { threadId: string; turnId: string }): Promise<void>;
   runTurn(context: CodexTurnContext & { threadId: string }): AsyncGenerator<CodexEvent>;
 }
