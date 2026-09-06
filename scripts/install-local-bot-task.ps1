@@ -8,7 +8,7 @@ $arguments = "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy By
 
 $action = New-ScheduledTaskAction -Execute $powerShell -Argument $arguments
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
-$principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
+$principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet `
   -AllowStartIfOnBatteries `
   -DontStopIfGoingOnBatteries `
@@ -23,7 +23,7 @@ Register-ScheduledTask `
   -Trigger $trigger `
   -Principal $principal `
   -Settings $settings `
-  -Description "Runs the local Codex Feishu bridge for the signed-in user." `
+  -Description "Runs the local Codex Feishu bridge with the signed-in user's highest available privileges." `
   -Force | Out-Null
 
 Start-ScheduledTask -TaskName $taskName
