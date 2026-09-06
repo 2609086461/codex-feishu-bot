@@ -32,14 +32,14 @@ interface TurnStartResponse {
   };
 }
 
-const LOCAL_FEISHU_BRIDGE_PATH = resolve(
+const LOCAL_FEISHU_BRIDGE_LAUNCHER_PATH = resolve(
   dirname(fileURLToPath(import.meta.url)),
-  "../../../scripts/feishu-bridge.mjs"
+  "../../../scripts/invoke-local-feishu-bridge.ps1"
 );
 
 function feishuBridgeCommand(): string {
   return process.platform === "win32"
-    ? `node "${LOCAL_FEISHU_BRIDGE_PATH}"`
+    ? `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${LOCAL_FEISHU_BRIDGE_LAUNCHER_PATH}"`
     : "node /opt/codex-tools/feishu-bridge.mjs";
 }
 
