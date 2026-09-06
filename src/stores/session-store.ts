@@ -15,6 +15,23 @@ export class SessionStore {
     return session;
   }
 
+  update(chatId: string, patch: Partial<ChatSession>): ChatSession | undefined {
+    const session = this.sessions.get(chatId);
+    if (!session) {
+      return undefined;
+    }
+
+    const next = {
+      ...session,
+      ...patch,
+      chatId,
+      updatedAt: new Date().toISOString()
+    };
+    this.sessions.set(chatId, next);
+    this.onChange?.();
+    return next;
+  }
+
   attachRun(chatId: string, runId: string): void {
     const session = this.sessions.get(chatId);
     if (!session) {

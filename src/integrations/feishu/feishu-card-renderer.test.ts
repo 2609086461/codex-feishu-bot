@@ -4,6 +4,7 @@ import test from "node:test";
 import type { ConversationItem } from "../../domain/types.js";
 import {
   renderAssistantCardContent,
+  renderProgressCardContent,
   renderToolCardContent
 } from "./feishu-card-renderer.js";
 
@@ -117,4 +118,45 @@ test("renderToolCardContent uses specific search query as folded title", () => {
     payload.body.elements[0].header.title.content,
     /\*\*已完成 · Escape from Tarkov latest patch notes 2026 official\*\*/
   );
+});
+
+test("renderProgressCardContent renders a compact shared status card", () => {
+  const payload = JSON.parse(
+    renderProgressCardContent(
+      createItem({
+        itemId: "shared-progress",
+        kind: "progress_card",
+        source: "progress",
+        phase: "streaming",
+        progressPlan: [
+          { step: "检查代码", status: "completed" },
+          { step: "运行测试", status: "inProgress" },
+          { step: "部署服务", status: "pending" }
+        ],
+        progressEntries: [
+          {
+            itemId: "tool_1",
+            title: "执行命令",
+            status: "completed",
+            command: "pnpm test",
+            filePaths: []
+          },
+          {
+            itemId: "tool_2",
+            title: "修改文件",
+            status: "running",
+            filePaths: ["src/app.ts"]
+          }
+        ]
+      })
+    )
+  );
+
+  assert.equal(payload.schema, "2.0");
+  assert.equal(payload.header.template, "blue");
+  assert.equal(payload.header.title.content, "正在处理");
+  assert.match(payload.body.elements[0].content, /计划 1\/3/);
+  assert.match(payload.body.elements[0].content, /\[x\] 检查代码/);
+  assert.match(payload.body.elements[0].content, /执行命令.*pnpm test/);
+  assert.match(payload.body.elements[0].content, /修改文件.*app\.ts/);
 });

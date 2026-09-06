@@ -1,23 +1,25 @@
 # AGENTS.md
 
-This repository is designed for a Codex-operated bootstrap flow.
+This repository contains the shared implementation for both the local Windows bot and the cloud Docker bot.
 
 ## Primary Goal
 
-Set up and deploy a Feishu bot backed by `codex app-server` with as little manual work as possible. The intended operator is another Codex session running on the user's machine.
+Maintain one portable Feishu bridge implementation backed by `codex app-server`, while keeping environment-specific startup, credentials, and runtime state separate.
 
-## Required Execution Order
+## Operating Modes
 
-1. Read `README.md`.
-2. Read `docs/codex-bootstrap-playbook.md`.
-3. Read `docs/feishu-console-automation.md`.
-4. Run `pnpm install`.
-5. Run `pnpm bootstrap:env`.
-6. Run `pnpm chrome:debug`.
-7. Use browser automation through Chrome CDP to configure Feishu Open Platform.
-8. Persist discovered values into `.env.real`.
-9. Start Docker deployment with `pnpm docker:up`.
-10. Verify with `pnpm docker:smoke`.
+- Windows local mode uses the PowerShell scripts under `scripts/`, Windows Task Scheduler, HTTP port `3100`, and Codex app-server port `4600`.
+- Cloud mode uses the single-container Docker deployment and persistent mounted runtime directories.
+- Bootstrap mode is only for creating or reconfiguring a Feishu application. Follow `docs/codex-bootstrap-playbook.md` and `docs/feishu-console-automation.md` only for that task.
+- Do not rerun dependency installation, browser setup, Git status, or deployment checks for ordinary chat handling unless the current task requires them.
+
+## Shared Git Workflow
+
+- This private repository is the source of truth for shared source code, tests, documentation, `AGENTS.md`, and repository skills.
+- Check `git status` before editing, synchronizing, committing, or deploying, not before ordinary conversation or read-only questions.
+- Pull only with fast-forward when the working tree is clean. Never reset, overwrite, or discard local or cloud changes to resolve divergence, and never force-push.
+- Keep reusable Codex guidance in `AGENTS.md` and `.agents/skills/` so both environments load the same rules after a Git sync.
+- Keep real `.env` files, Feishu/OpenAI/GitHub credentials, SSH keys, Codex authentication, sessions, logs, caches, and runtime state outside Git.
 
 ## Browser Automation Rules
 
@@ -36,7 +38,7 @@ Only stop for those checkpoints. Do not push routine console clicking back onto 
 
 ## Deployment Rules
 
-- Use the Docker path for setup and validation. Do not default to `pnpm start`.
+- Use the Docker path for cloud setup and integration validation. Use the PowerShell launchers for the established Windows local service.
 - Use the single-container Docker path. Do not reintroduce a `codex-app-server` sidecar deployment mode.
 - Keep runtime secrets in `.env.real`.
 - Keep Codex runtime work under the mounted `/workspace` only. Do not treat the repository checkout as the runtime workspace.
@@ -44,6 +46,13 @@ Only stop for those checkpoints. Do not push routine console clicking back onto 
 - Keep generated user-facing files under `CODEX_ARTIFACTS_DIR` unless the user explicitly asks to write into the repository itself.
 - Never commit `.env.real` or local browser profile data.
 - Prefer `pnpm docker:*` commands for validation and debugging.
+
+## Verification
+
+- Run `pnpm typecheck` and `pnpm test` after shared TypeScript changes.
+- Run `pnpm build` before deployment.
+- Test the environment-specific launcher only when it was changed or when deployment is requested.
+- Offline verification does not authorize sending Feishu messages, modifying Feishu resources, changing cloud services, or replacing live credentials.
 
 ## Success Criteria
 

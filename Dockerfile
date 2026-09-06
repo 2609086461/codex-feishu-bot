@@ -4,7 +4,7 @@ WORKDIR /app
 
 RUN corepack enable
 
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm config set fetch-retries 5 \
   && pnpm config set fetch-retry-factor 2 \
   && pnpm config set fetch-retry-maxtimeout 60000 \
@@ -18,7 +18,7 @@ RUN pnpm prune --prod
 
 FROM node:22-bookworm-slim AS runtime
 
-ARG CODEX_CLI_VERSION=0.111.0
+ARG CODEX_CLI_VERSION=0.153.4
 
 WORKDIR /app
 
@@ -28,6 +28,7 @@ ENV HOME=/root
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     bash \
+    bubblewrap \
     ca-certificates \
     curl \
     git \

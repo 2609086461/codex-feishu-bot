@@ -15,6 +15,10 @@ if [ ! -f "${CODEX_HOME_DIR}/auth.json" ]; then
   fi
 fi
 
+# The Codex child runs the Feishu bridge, so it must inherit the Feishu credentials.
+# Remove only the OpenAI bootstrap secret after authentication is available on disk.
+unset OPENAI_API_KEY
+
 if [ "$#" -gt 0 ]; then
   exec codex "$@"
 fi

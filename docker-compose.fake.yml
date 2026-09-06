@@ -32,9 +32,11 @@ services:
       LIVE_UPDATE_DEBOUNCE_MS: 300
       FEISHU_PROVIDER: fake
       FEISHU_TRANSPORT: websocket
+      FEISHU_ALLOWED_OPEN_IDS: ou_fake_user
+      FEISHU_ALLOW_GROUP_MESSAGES: "true"
       FAKE_FEISHU_BASE_URL: http://fake-feishu:3400
       FAKE_FEISHU_WS_URL: ws://fake-feishu:3400/ws
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - ./.codex-local/workspace:/workspace

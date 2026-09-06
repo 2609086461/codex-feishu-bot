@@ -1,4 +1,10 @@
-import type { ChatSession, CodexEvent, IncomingChatMessage } from "../../domain/types.js";
+import type {
+  ChatSession,
+  CodexEvent,
+  CodexModelInfo,
+  CodexWorkspaceProject,
+  IncomingChatMessage
+} from "../../domain/types.js";
 
 export interface CodexTurnContext {
   session?: ChatSession;
@@ -9,6 +15,9 @@ export interface CodexTurnContext {
 export interface CodexWorker {
   start?(): Promise<void>;
   close?(): Promise<void>;
+  getDefaultModel?(): string;
+  listModels?(): Promise<CodexModelInfo[]>;
+  listWorkspaceProjects?(): Promise<CodexWorkspaceProject[]>;
   ensureThread(context: CodexTurnContext): Promise<string>;
   steerTurn?(context: CodexTurnContext & { threadId: string; turnId: string }): Promise<void>;
   runTurn(context: CodexTurnContext & { threadId: string }): AsyncGenerator<CodexEvent>;

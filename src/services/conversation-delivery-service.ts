@@ -45,6 +45,13 @@ export class ConversationDeliveryService {
     this.timers.set(key, timer);
   }
 
+  async sendText(chatId: string, content: string): Promise<string> {
+    return this.feishuClient.sendText({
+      chatId,
+      content
+    });
+  }
+
   async flush(runId: string, itemId: string): Promise<void> {
     const key = this.makeKey(runId, itemId);
     const timer = this.timers.get(key);
@@ -89,7 +96,7 @@ export class ConversationDeliveryService {
       return;
     }
 
-    if (item.kind === "tool_card") {
+    if (item.kind === "tool_card" || item.kind === "progress_card") {
       await this.deliverToolItem(item);
       return;
     }

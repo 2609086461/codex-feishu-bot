@@ -1,7 +1,14 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { isAbsolute, relative, sep } from "node:path";
 
 import type { Env } from "../../config/env.js";
-import type { CodexEvent } from "../../domain/types.js";
+import type {
+  CodexEvent,
+  CodexModelInfo,
+  CodexWorkspaceProject,
+  RateLimitWindow,
+  ThreadTokenUsage
+} from "../../domain/types.js";
 import { AsyncEventQueue } from "./async-event-queue.js";
 import { AppServerWsConnection } from "./app-server-ws-connection.js";
 import type { CodexTurnContext, CodexWorker } from "./codex-worker.js";
@@ -24,6 +31,45 @@ interface TurnStartResponse {
   };
 }
 
+interface ModelListResponse {
+  data: CodexModelInfo[];
+  nextCursor?: string | null;
+}
+
+interface ProjectListResponse {
+  data: Array<{
+    id: string;
+    name: string;
+    roots: Array<{ path: string }>;
+    createdAt: number;
+    updatedAt: number;
+  }>;
+  nextCursor?: string | null;
+}
+
+interface WorkspaceThreadListResponse {
+  data: Array<{
+    id: string;
+    projectId: string | null;
+    name: string | null;
+    preview: string;
+    cwd: string;
+    createdAt: number;
+    updatedAt: number;
+  }>;
+  nextCursor?: string | null;
+}
+
+interface RateLimitSnapshot {
+  primary?: RateLimitWindow | null;
+  secondary?: RateLimitWindow | null;
+}
+
+interface AccountRateLimitsResponse {
+  rateLimits: RateLimitSnapshot;
+  rateLimitsByLimitId?: Record<string, RateLimitSnapshot> | null;
+}
+
 interface TurnCompletedNotification {
   turn: {
     status: "completed" | "interrupted" | "failed" | "inProgress";
@@ -32,6 +78,14 @@ interface TurnCompletedNotification {
       additionalDetails?: string | null;
     } | null;
   };
+}
+
+interface TurnPlanUpdatedNotification {
+  explanation?: string | null;
+  plan?: Array<{
+    step?: string;
+    status?: "pending" | "inProgress" | "completed";
+  }>;
 }
 
 interface ThreadItem {
@@ -77,6 +131,10 @@ interface JsonRpcRequest {
 
 interface TurnStreamState {
   currentThreadId: string;
+  selectedModel: string;
+  selectedModelDisplay: string;
+  reasoningEffort: "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+  showReasoningSummary: boolean;
   currentTurnId?: string;
   commandByItemId: Map<string, string>;
   commandOutputByItemId: Map<string, string>;
@@ -84,6 +142,9 @@ interface TurnStreamState {
   agentTextByItemId: Map<string, string>;
   agentSourceByItemId: Map<string, "commentary" | "final_answer">;
   toolKindByItemId: Map<string, string>;
+  reasoningTextByItemId: Map<string, string>;
+  reasoningSummaryIndexByItemId: Map<string, number>;
+  latestTokenUsage?: ThreadTokenUsage;
   finalAnswerItemId?: string;
 }
 
@@ -100,12 +161,19 @@ function describeToolType(type: string): string {
   }
 }
 
-function buildTurnInput(context: CodexTurnContext, artifactsDir: string) {
+function buildTurnInput(
+  context: CodexTurnContext,
+  artifactsDir: string,
+  sandboxMode: Env["CODEX_APP_SERVER_SANDBOX"]
+) {
+  const workspaceInstruction = sandboxMode === "danger-full-access"
+    ? `- Your current working directory is ${context.workspaceId}. You may read, create, edit, move, and run files elsewhere on this computer when the user's request requires it.`
+    : `- Your working directory is ${context.workspaceId}. Treat it as the only writable project/workspace root you should use.`;
   const controllerInstructions = [
     "Controller instructions for the Feishu bridge environment:",
     `- You are responding inside Feishu chat ${context.message.chatId}.`,
     `- The current user message id is ${context.message.messageId}.`,
-    `- Your working directory is ${context.workspaceId}. Treat it as the only writable project/workspace root you should use.`,
+    workspaceInstruction,
     "- Do not assume the application repository root is available inside your workspace.",
     "- Publish user-visible output directly into the Feishu chat. Do not use reply-to-message semantics unless explicitly required.",
     "- Every user-visible file, image, sheet, or exported artifact must be published through Feishu APIs.",
@@ -160,6 +228,111 @@ export class CodexAppServerWorker implements CodexWorker {
     private readonly logger?: LoggerLike
   ) {}
 
+  getDefaultModel(): string {
+    return this.env.CODEX_APP_SERVER_MODEL;
+  }
+
+  async listModels(): Promise<CodexModelInfo[]> {
+    await this.start();
+    const connection = new AppServerWsConnection(this.env.CODEX_APP_SERVER_LISTEN_URL, {
+      logger: this.logger,
+      label: "model-list"
+    });
+    await connection.connect();
+
+    try {
+      const models: CodexModelInfo[] = [];
+      let cursor: string | null | undefined;
+      do {
+        const response = await connection.request<ModelListResponse>("model/list", {
+          cursor
+        });
+        models.push(...response.data);
+        cursor = response.nextCursor;
+      } while (cursor);
+
+      if (!models.some((model) => model.model === this.env.CODEX_APP_SERVER_MODEL)) {
+        models.push({
+          id: this.env.CODEX_APP_SERVER_MODEL,
+          model: this.env.CODEX_APP_SERVER_MODEL,
+          displayName: this.env.CODEX_APP_SERVER_MODEL,
+          description: "服务器当前默认模型",
+          hidden: false,
+          isDefault: false
+        });
+      }
+      return models;
+    } finally {
+      await connection.close();
+    }
+  }
+
+  async listWorkspaceProjects(): Promise<CodexWorkspaceProject[]> {
+    await this.start();
+    const connection = new AppServerWsConnection(this.env.CODEX_APP_SERVER_LISTEN_URL, {
+      logger: this.logger,
+      label: "workspace-project-list"
+    });
+    await connection.connect();
+
+    try {
+      const projects: ProjectListResponse["data"] = [];
+      let projectCursor: string | null | undefined;
+      do {
+        const response = await connection.request<ProjectListResponse>("project/list", {
+          cursor: projectCursor,
+          limit: 100,
+          sortKey: "recencyAt",
+          sortDirection: "desc"
+        });
+        projects.push(...response.data);
+        projectCursor = response.nextCursor;
+      } while (projectCursor);
+
+      const threads: WorkspaceThreadListResponse["data"] = [];
+      let threadCursor: string | null | undefined;
+      do {
+        const response = await connection.request<WorkspaceThreadListResponse>("thread/list", {
+          cursor: threadCursor,
+          limit: 100,
+          sortKey: "recency_at",
+          sortDirection: "desc",
+          useStateDbOnly: true
+        });
+        threads.push(...response.data);
+        threadCursor = response.nextCursor;
+      } while (threadCursor);
+
+      return projects.map((project) => ({
+        id: project.id,
+        name: project.name,
+        roots: project.roots.map((root) => root.path),
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt,
+        threads: threads
+          .filter((thread) =>
+            thread.projectId === project.id ||
+            (!thread.projectId && project.roots.some((root) => this.isWithinRoot(thread.cwd, root.path)))
+          )
+          .map((thread) => ({
+            id: thread.id,
+            name: thread.name?.trim() || thread.preview.trim() || "未命名任务",
+            cwd: thread.cwd,
+            createdAt: thread.createdAt,
+            updatedAt: thread.updatedAt
+          }))
+      }));
+    } finally {
+      await connection.close();
+    }
+  }
+
+  private isWithinRoot(path: string, root: string): boolean {
+    const child = relative(root, path);
+    return child === "" ||
+      (child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child));
+  }
+
   async start(): Promise<void> {
     if (!this.env.CODEX_APP_SERVER_MANAGED || this.child) {
       return;
@@ -179,8 +352,13 @@ export class CodexAppServerWorker implements CodexWorker {
       "准备托管启动 codex app-server"
     );
 
+    const childEnv = { ...process.env };
+    // Codex invokes the Feishu bridge, so its child process needs these credentials.
+    delete childEnv.OPENAI_API_KEY;
+
     this.child = spawn(this.env.CODEX_APP_SERVER_COMMAND, args, {
-      stdio: "pipe"
+      stdio: "pipe",
+      env: childEnv
     });
 
     this.child.stdout.on("data", (chunk) => {
@@ -219,6 +397,11 @@ export class CodexAppServerWorker implements CodexWorker {
   }
 
   async ensureThread(context: CodexTurnContext): Promise<string> {
+    const requestedThreadId = context.session?.threadId;
+    if (!requestedThreadId || requestedThreadId.startsWith("pending:")) {
+      return requestedThreadId ?? `pending:${context.message.chatId}:${Date.now()}`;
+    }
+
     await this.start();
 
     const connection = new AppServerWsConnection(this.env.CODEX_APP_SERVER_LISTEN_URL, {
@@ -228,62 +411,21 @@ export class CodexAppServerWorker implements CodexWorker {
     await connection.connect();
 
     try {
-      if (context.session?.threadId) {
-        try {
-          this.logger?.info(
-            {
-              chatId: context.message.chatId,
-              messageId: context.message.messageId,
-              threadId: context.session.threadId,
-              workspaceId: context.workspaceId
-            },
-            "尝试恢复 Codex thread"
-          );
-          const response = await connection.request<ThreadResponse>("thread/resume", {
-            threadId: context.session.threadId,
-            model: this.env.CODEX_APP_SERVER_MODEL,
-            cwd: context.workspaceId,
-            approvalPolicy: this.env.CODEX_APP_SERVER_APPROVAL_POLICY,
-            sandbox: this.env.CODEX_APP_SERVER_SANDBOX,
-            persistExtendedHistory: true
-          });
-
-          this.logger?.info(
-            {
-              chatId: context.message.chatId,
-              messageId: context.message.messageId,
-              threadId: response.thread.id
-            },
-            "Codex thread 恢复成功"
-          );
-          return response.thread.id;
-        } catch (error) {
-          this.logger?.warn(
-            {
-              chatId: context.message.chatId,
-              messageId: context.message.messageId,
-              threadId: context.session.threadId,
-              error: error instanceof Error ? error.message : String(error)
-            },
-            "恢复 Codex thread 失败，将退回 thread/start"
-          );
-        }
-      }
-
       this.logger?.info(
         {
           chatId: context.message.chatId,
           messageId: context.message.messageId,
+          threadId: requestedThreadId,
           workspaceId: context.workspaceId
         },
-        "开始创建新的 Codex thread"
+        "尝试恢复 Codex thread"
       );
-      const response = await connection.request<ThreadResponse>("thread/start", {
-        model: this.env.CODEX_APP_SERVER_MODEL,
+      const response = await connection.request<ThreadResponse>("thread/resume", {
+        threadId: requestedThreadId,
+        model: this.modelFor(context),
         cwd: context.workspaceId,
         approvalPolicy: this.env.CODEX_APP_SERVER_APPROVAL_POLICY,
         sandbox: this.env.CODEX_APP_SERVER_SANDBOX,
-        experimentalRawEvents: false,
         persistExtendedHistory: true
       });
 
@@ -293,9 +435,22 @@ export class CodexAppServerWorker implements CodexWorker {
           messageId: context.message.messageId,
           threadId: response.thread.id
         },
-        "Codex thread 创建成功"
+        "Codex thread 恢复成功"
       );
       return response.thread.id;
+    } catch (error) {
+      const pendingThreadId = `pending:${context.message.chatId}:${Date.now()}`;
+      this.logger?.warn(
+        {
+          chatId: context.message.chatId,
+          messageId: context.message.messageId,
+          threadId: requestedThreadId,
+          pendingThreadId,
+          error: error instanceof Error ? error.message : String(error)
+        },
+        "恢复 Codex thread 失败，将在本轮 turn 中重新创建"
+      );
+      return pendingThreadId;
     } finally {
       await connection.close();
     }
@@ -391,12 +546,18 @@ export class CodexAppServerWorker implements CodexWorker {
 
     const state: TurnStreamState = {
       currentThreadId: context.threadId,
+      selectedModel: this.modelFor(context),
+      selectedModelDisplay: context.session?.modelDisplayName ?? this.modelFor(context),
+      reasoningEffort: context.session?.reasoningEffort ?? "medium",
+      showReasoningSummary: context.session?.showReasoningSummary ?? false,
       commandByItemId: new Map(),
       commandOutputByItemId: new Map(),
       filePathsByItemId: new Map(),
       agentTextByItemId: new Map(),
       agentSourceByItemId: new Map(),
-      toolKindByItemId: new Map()
+      toolKindByItemId: new Map(),
+      reasoningTextByItemId: new Map(),
+      reasoningSummaryIndexByItemId: new Map()
     };
 
     const queue = new AsyncEventQueue<CodexEvent>();
@@ -429,7 +590,7 @@ export class CodexAppServerWorker implements CodexWorker {
           await resumedConnection.connect();
           await resumedConnection.request<ThreadResponse>("thread/resume", {
             threadId: state.currentThreadId,
-            model: this.env.CODEX_APP_SERVER_MODEL,
+            model: state.selectedModel,
             cwd: context.workspaceId,
             approvalPolicy: this.env.CODEX_APP_SERVER_APPROVAL_POLICY,
             sandbox: this.env.CODEX_APP_SERVER_SANDBOX,
@@ -588,7 +749,7 @@ export class CodexAppServerWorker implements CodexWorker {
       const actualThreadId = context.threadId.startsWith("pending:")
         ? (
             await connection.request<ThreadResponse>("thread/start", {
-              model: this.env.CODEX_APP_SERVER_MODEL,
+              model: state.selectedModel,
               cwd: context.workspaceId,
               approvalPolicy: this.env.CODEX_APP_SERVER_APPROVAL_POLICY,
               sandbox: this.env.CODEX_APP_SERVER_SANDBOX,
@@ -599,7 +760,7 @@ export class CodexAppServerWorker implements CodexWorker {
         : (
             await connection.request<ThreadResponse>("thread/resume", {
               threadId: context.threadId,
-              model: this.env.CODEX_APP_SERVER_MODEL,
+              model: state.selectedModel,
               cwd: context.workspaceId,
               approvalPolicy: this.env.CODEX_APP_SERVER_APPROVAL_POLICY,
               sandbox: this.env.CODEX_APP_SERVER_SANDBOX,
@@ -627,8 +788,14 @@ export class CodexAppServerWorker implements CodexWorker {
 
       const turnStart = await connection.request<TurnStartResponse>("turn/start", {
         threadId: actualThreadId,
-        input: buildTurnInput(context, this.env.CODEX_ARTIFACTS_DIR),
-        model: this.env.CODEX_APP_SERVER_MODEL,
+        input: buildTurnInput(
+          context,
+          this.env.CODEX_ARTIFACTS_DIR,
+          this.env.CODEX_APP_SERVER_SANDBOX
+        ),
+        model: state.selectedModel,
+        effort: state.reasoningEffort,
+        summary: state.showReasoningSummary ? "auto" : "none",
         cwd: context.workspaceId,
         approvalPolicy: this.env.CODEX_APP_SERVER_APPROVAL_POLICY,
         sandboxPolicy: {
@@ -738,6 +905,89 @@ export class CodexAppServerWorker implements CodexWorker {
       return;
     }
 
+    if (message.method === "turn/plan/updated") {
+      const update = params as unknown as TurnPlanUpdatedNotification;
+      const plan = (update.plan ?? []).flatMap((entry) =>
+        entry.step && entry.status
+          ? [{ step: entry.step, status: entry.status }]
+          : []
+      );
+      if (plan.length > 0) {
+        queue.push({
+          kind: "plan_updated",
+          explanation: update.explanation ?? undefined,
+          plan
+        });
+      }
+      return;
+    }
+
+    if (message.method === "thread/tokenUsage/updated") {
+      const tokenUsage = params.tokenUsage as ThreadTokenUsage | undefined;
+      if (tokenUsage?.last && tokenUsage.total) {
+        state.latestTokenUsage = tokenUsage;
+      }
+      return;
+    }
+
+    if (message.method === "item/reasoning/summaryPartAdded") {
+      if (!state.showReasoningSummary) {
+        return;
+      }
+
+      const itemId = params.itemId;
+      const summaryIndex = params.summaryIndex;
+      if (typeof itemId !== "string" || typeof summaryIndex !== "number") {
+        return;
+      }
+
+      const previous = state.reasoningTextByItemId.get(itemId) ?? "";
+      const previousIndex = state.reasoningSummaryIndexByItemId.get(itemId);
+      state.reasoningSummaryIndexByItemId.set(itemId, summaryIndex);
+      if (previous && previousIndex !== undefined && previousIndex !== summaryIndex) {
+        state.reasoningTextByItemId.set(itemId, `${previous}\n\n`);
+        queue.push({
+          kind: "assistant_message_delta",
+          itemId: `reasoning:${itemId}`,
+          text: "\n\n"
+        });
+      }
+      return;
+    }
+
+    if (message.method === "item/reasoning/summaryTextDelta") {
+      if (!state.showReasoningSummary) {
+        return;
+      }
+
+      const itemId = params.itemId;
+      const delta = params.delta;
+      const summaryIndex = params.summaryIndex;
+      if (typeof itemId !== "string" || typeof delta !== "string") {
+        return;
+      }
+
+      const publicItemId = `reasoning:${itemId}`;
+      const previous = state.reasoningTextByItemId.get(itemId) ?? "";
+      if (!previous) {
+        queue.push({
+          kind: "assistant_message_started",
+          itemId: publicItemId,
+          source: "commentary"
+        });
+      }
+      if (typeof summaryIndex === "number") {
+        state.reasoningSummaryIndexByItemId.set(itemId, summaryIndex);
+      }
+      state.reasoningTextByItemId.set(itemId, `${previous}${delta}`);
+      queue.push({
+        kind: "assistant_message_delta",
+        itemId: publicItemId,
+        text: delta
+      });
+      return;
+    }
+
     if (message.method === "item/started" || message.method === "item/completed") {
       const item = params.item as ThreadItem | undefined;
       if (!item) {
@@ -782,6 +1032,20 @@ export class CodexAppServerWorker implements CodexWorker {
             itemId: item.id,
             text: item.text
           });
+        }
+        return;
+      }
+
+      if (item.type === "reasoning") {
+        if (message.method === "item/completed" && state.showReasoningSummary) {
+          const text = state.reasoningTextByItemId.get(item.id);
+          if (text?.trim()) {
+            queue.push({
+              kind: "assistant_message_completed",
+              itemId: `reasoning:${item.id}`,
+              text
+            });
+          }
         }
         return;
       }
@@ -1019,6 +1283,7 @@ export class CodexAppServerWorker implements CodexWorker {
           if (lastAgentMessage?.text) {
             const source = lastAgentMessage.phase === "final_answer" ? "final_answer" : "commentary";
             const itemId = lastAgentMessage.id;
+            state.finalAnswerItemId = itemId;
             queue.push({
               kind: "assistant_message_started",
               itemId,
@@ -1030,6 +1295,31 @@ export class CodexAppServerWorker implements CodexWorker {
               text: lastAgentMessage.text
             });
           }
+        }
+
+        if (state.finalAnswerItemId) {
+          let rateLimitWindows: RateLimitWindow[] = [];
+          try {
+            rateLimitWindows = await this.readRateLimitWindows(connection);
+          } catch (error) {
+            this.logger?.warn(
+              {
+                threadId,
+                turnId: state.currentTurnId,
+                error: error instanceof Error ? error.message : String(error)
+              },
+              "读取 Codex 账号额度失败，本轮仅显示 token 用量"
+            );
+          }
+
+          queue.push({
+            kind: "turn_metrics",
+            itemId: state.finalAnswerItemId,
+            model: state.selectedModelDisplay,
+            reasoningEffort: state.reasoningEffort,
+            tokenUsage: state.latestTokenUsage,
+            rateLimitWindows
+          });
         }
       }
 
@@ -1043,6 +1333,18 @@ export class CodexAppServerWorker implements CodexWorker {
             message?: string;
           }
         | undefined;
+
+      if (params.willRetry === true) {
+        this.logger?.warn(
+          {
+            threadId,
+            turnId: state.currentTurnId,
+            error: maybeError?.message ?? "Codex App Server 正在重试"
+          },
+          "Codex 请求暂时失败，等待自动重试"
+        );
+        return;
+      }
 
       queue.push({
         kind: "error",
@@ -1058,6 +1360,23 @@ export class CodexAppServerWorker implements CodexWorker {
       );
       queue.close();
     }
+  }
+
+  private modelFor(context: CodexTurnContext): string {
+    return context.session?.model ?? this.env.CODEX_APP_SERVER_MODEL;
+  }
+
+  private async readRateLimitWindows(
+    connection: AppServerWsConnection
+  ): Promise<RateLimitWindow[]> {
+    const response = await connection.request<AccountRateLimitsResponse>(
+      "account/rateLimits/read",
+      {}
+    );
+    const snapshot = response.rateLimitsByLimitId?.codex ?? response.rateLimits;
+    return [snapshot.primary, snapshot.secondary].filter(
+      (window): window is RateLimitWindow => Boolean(window && Number.isFinite(window.usedPercent))
+    );
   }
 
   private handleRequest(

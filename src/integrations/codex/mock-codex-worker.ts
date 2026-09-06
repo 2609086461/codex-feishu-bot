@@ -1,9 +1,26 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
-import type { CodexEvent } from "../../domain/types.js";
+import type { CodexEvent, CodexModelInfo } from "../../domain/types.js";
 import type { CodexTurnContext, CodexWorker } from "./codex-worker.js";
 
 export class MockCodexWorker implements CodexWorker {
+  getDefaultModel(): string {
+    return "mock-default";
+  }
+
+  async listModels(): Promise<CodexModelInfo[]> {
+    return [
+      {
+        id: "mock-default",
+        model: "mock-default",
+        displayName: "Mock Default",
+        description: "Mock model",
+        hidden: false,
+        isDefault: true
+      }
+    ];
+  }
+
   async ensureThread(context: CodexTurnContext): Promise<string> {
     return context.session?.threadId ?? `thread_mock_${Date.now()}`;
   }

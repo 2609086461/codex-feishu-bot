@@ -11,6 +11,10 @@ import { MockCodexWorker } from "./integrations/codex/mock-codex-worker.js";
 import { FakeFeishuMessageClient } from "./integrations/feishu/fake-feishu-message-client.js";
 import { FakeFeishuWsSubscriber } from "./integrations/feishu/fake-feishu-ws-subscriber.js";
 import {
+  authorizeFeishuMessage,
+  createFeishuAccessPolicy
+} from "./integrations/feishu/access-control.js";
+import {
   createFeishuOpenApiClient,
   hasFeishuCredentials
 } from "./integrations/feishu/feishu-openapi-client.js";
@@ -102,6 +106,25 @@ export function buildAppRuntime(env: Env): AppRuntime {
     env.DEFAULT_WORKSPACE,
     app.log
   );
+  const accessPolicy = createFeishuAccessPolicy(
+    env.FEISHU_ALLOWED_OPEN_IDS,
+    env.FEISHU_ALLOW_GROUP_MESSAGES
+  );
+  const enqueueAuthorizedMessage = (message: Parameters<typeof orchestrator.enqueue>[0]) => {
+    const decision = authorizeFeishuMessage(message, accessPolicy);
+    if (!decision.allowed) {
+      app.log.warn(
+        {
+          senderId: message.senderId,
+          chatType: message.chatType,
+          reason: decision.reason
+        },
+        "忽略未授权的飞书消息"
+      );
+      return;
+    }
+    orchestrator.enqueue(message);
+  };
 
   void registerHealthRoutes(app);
   void registerDebugRoutes(app, {
@@ -118,17 +141,13 @@ export function buildAppRuntime(env: Env): AppRuntime {
         ? new FakeFeishuWsSubscriber({
             env,
             logger: app.log,
-            onMessage: (message) => {
-              orchestrator.enqueue(message);
-            }
+            onMessage: enqueueAuthorizedMessage
           })
         : hasFeishuCredentials(env)
           ? new FeishuWsSubscriber({
               env,
               logger: app.log,
-              onMessage: (message) => {
-                orchestrator.enqueue(message);
-              }
+              onMessage: enqueueAuthorizedMessage
             })
           : undefined;
 
@@ -213,6 +232,10 @@ export function buildAppRuntime(env: Env): AppRuntime {
       if (env.FEISHU_PROVIDER !== "fake" && !hasFeishuCredentials(env)) {
         app.log.warn("缺少飞书凭证，跳过 WebSocket 建连");
         return;
+      }
+
+      if (accessPolicy.allowedOpenIds.size === 0) {
+        throw new Error("FEISHU_ALLOWED_OPEN_IDS 不能为空；拒绝以无访问控制模式启动");
       }
 
       await wsSubscriber?.start();

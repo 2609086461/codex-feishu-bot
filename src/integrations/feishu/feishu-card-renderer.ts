@@ -201,6 +201,51 @@ function toolPhaseLabel(phase: ConversationItem["phase"]): string {
   }
 }
 
+function progressHeader(phase: ConversationItem["phase"]): {
+  template: InteractiveCard["header"] extends infer T
+    ? T extends { template: infer U }
+      ? U
+      : never
+    : never;
+  title: string;
+} {
+  switch (phase) {
+    case "completed":
+      return { template: "green", title: "执行完成" };
+    case "failed":
+      return { template: "red", title: "执行失败" };
+    case "queued":
+      return { template: "grey", title: "等待执行" };
+    case "streaming":
+      return { template: "blue", title: "正在处理" };
+  }
+}
+
+function progressMark(status: "pending" | "inProgress" | "completed" | "running" | "failed"): string {
+  switch (status) {
+    case "completed":
+      return "[x]";
+    case "inProgress":
+    case "running":
+      return "[>]";
+    case "failed":
+      return "[!]";
+    case "pending":
+      return "[ ]";
+  }
+}
+
+function formatElapsed(item: ConversationItem): string {
+  const elapsedSeconds = Math.max(
+    0,
+    Math.round((Date.parse(item.updatedAt) - Date.parse(item.createdAt)) / 1000)
+  );
+  if (elapsedSeconds < 60) {
+    return `${elapsedSeconds} 秒`;
+  }
+  return `${Math.floor(elapsedSeconds / 60)} 分 ${elapsedSeconds % 60} 秒`;
+}
+
 export function renderTextMessageContent(content: string): string {
   return JSON.stringify({
     text: content.trim() || "处理中..."
@@ -223,6 +268,9 @@ export function renderAssistantCardContent(item: ConversationItem): string {
   }
 
   body = body || "处理中...";
+  if (item.footer?.trim()) {
+    body = `${body}\n\n---\n${item.footer.trim()}`;
+  }
   const elements =
     item.source === "commentary"
       ? [collapsiblePanel(processPreviewTitle(body), body)]
@@ -272,6 +320,62 @@ export function renderToolCardContent(item: ConversationItem): string {
     },
     body: {
       elements
+    }
+  };
+
+  return JSON.stringify(card);
+}
+
+export function renderProgressCardContent(item: ConversationItem): string {
+  const plan = item.progressPlan ?? [];
+  const entries = (item.progressEntries ?? []).slice(-8);
+  const completedSteps = plan.filter((step) => step.status === "completed").length;
+  const sections: string[] = [];
+
+  if (plan.length > 0) {
+    sections.push(
+      `**计划 ${completedSteps}/${plan.length}**\n${plan
+        .map((step) => `${progressMark(step.status)} ${escapeMarkdownText(step.step)}`)
+        .join("\n")}`
+    );
+  } else if (item.content?.trim()) {
+    sections.push(`**当前计划**\n${escapeMarkdownText(item.content.trim())}`);
+  }
+
+  if (entries.length > 0) {
+    const lines = entries.map((entry) => {
+      const summary = entry.command
+        ? summarizeCommand(entry.command)
+        : entry.filePaths.length > 0
+          ? summarizeFilePaths(entry.filePaths)
+          : summarizeTitle(entry.detail ?? entry.title, entry.title, 56);
+      return `${progressMark(entry.status)} **${escapeMarkdownText(entry.title)}** · ${escapeMarkdownText(summary)}`;
+    });
+    sections.push(`**最近操作**\n${lines.join("\n")}`);
+  }
+
+  if (sections.length === 0) {
+    sections.push("正在准备执行...");
+  }
+
+  sections.push(`耗时：${formatElapsed(item)}`);
+  const header = progressHeader(item.phase);
+  const card: InteractiveCard = {
+    schema: "2.0",
+    config: {
+      wide_screen_mode: true,
+      enable_forward: true,
+      update_multi: true
+    },
+    header: {
+      template: header.template,
+      title: {
+        tag: "plain_text",
+        content: header.title
+      }
+    },
+    body: {
+      elements: [markdownBlock(sections.join("\n\n"))]
     }
   };
 

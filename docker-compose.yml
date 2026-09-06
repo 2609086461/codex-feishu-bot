@@ -4,9 +4,23 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        CODEX_CLI_VERSION: ${CODEX_CLI_VERSION:-0.111.0}
+        CODEX_CLI_VERSION: ${CODEX_CLI_VERSION:-0.153.4}
     restart: unless-stopped
     init: true
+    mem_limit: 1400m
+    pids_limit: 256
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+      - SETUID
+      - SETGID
+      - SETFCAP
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=unconfined
+      - apparmor=unconfined
     environment:
       HOST: 0.0.0.0
       PORT: 3000
@@ -21,7 +35,7 @@ services:
       CODEX_APP_SERVER_LISTEN_URL: ws://127.0.0.1:4500
       CODEX_APP_SERVER_MODEL: ${CODEX_APP_SERVER_MODEL:-gpt-5.4}
       CODEX_APP_SERVER_APPROVAL_POLICY: never
-      CODEX_APP_SERVER_SANDBOX: danger-full-access
+      CODEX_APP_SERVER_SANDBOX: workspace-write
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       CODEX_HOME_DIR: /root/.codex
       FEISHU_PROVIDER: sdk
@@ -30,8 +44,10 @@ services:
       FEISHU_APP_ID: ${FEISHU_APP_ID:?set FEISHU_APP_ID}
       FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:?set FEISHU_APP_SECRET}
       FEISHU_VERIFICATION_TOKEN: ${FEISHU_VERIFICATION_TOKEN:-}
+      FEISHU_ALLOWED_OPEN_IDS: ${FEISHU_ALLOWED_OPEN_IDS:?set FEISHU_ALLOWED_OPEN_IDS}
+      FEISHU_ALLOW_GROUP_MESSAGES: ${FEISHU_ALLOW_GROUP_MESSAGES:-false}
     ports:
-      - "${APP_PORT:-3000}:3000"
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
     volumes:
       - ${CODEX_WORKSPACE_HOST_PATH:-./.codex-local/workspace}:/workspace
       - ${CODEX_HOME_SOURCE:-codex-home}:/root/.codex

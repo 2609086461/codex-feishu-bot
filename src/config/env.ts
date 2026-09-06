@@ -48,7 +48,7 @@ const envSchema = z.object({
     .default("never"),
   CODEX_APP_SERVER_SANDBOX: z
     .enum(["read-only", "workspace-write", "danger-full-access"])
-    .default("danger-full-access"),
+    .default("workspace-write"),
   DEFAULT_WORKSPACE: z.string().default(process.cwd()),
   CODEX_ARTIFACTS_DIR: z.string().default(".codex-local/artifacts"),
   RUNTIME_STATE_FILE: z.string().default(".codex-feishu-bot/runtime-state.json"),
@@ -59,6 +59,8 @@ const envSchema = z.object({
   FEISHU_APP_ID: z.string().optional(),
   FEISHU_APP_SECRET: z.string().optional(),
   FEISHU_VERIFICATION_TOKEN: z.string().optional(),
+  FEISHU_ALLOWED_OPEN_IDS: z.string().default(""),
+  FEISHU_ALLOW_GROUP_MESSAGES: envBoolean(false),
   FAKE_FEISHU_BASE_URL: z.string().url().default("http://127.0.0.1:3400"),
   FAKE_FEISHU_WS_URL: z.string().url().default("ws://127.0.0.1:3400/ws")
 });

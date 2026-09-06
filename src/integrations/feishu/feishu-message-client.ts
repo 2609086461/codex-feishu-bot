@@ -2,6 +2,7 @@ import type { ConversationItem } from "../../domain/types.js";
 import {
   renderAssistantCardContent,
   renderFileMessageContent,
+  renderProgressCardContent,
   renderTextMessageContent,
   renderToolCardContent
 } from "./feishu-card-renderer.js";
@@ -87,6 +88,8 @@ export function renderConversationItem(item: ConversationItem): string {
       return renderAssistantCardContent(item);
     case "tool_card":
       return renderToolCardContent(item);
+    case "progress_card":
+      return renderProgressCardContent(item);
     case "artifact_file":
       return renderFileMessageContent(item.itemId);
   }
