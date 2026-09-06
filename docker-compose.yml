@@ -24,6 +24,7 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 3000
+      TZ: ${TZ:-Asia/Shanghai}
       DEFAULT_WORKSPACE: /workspace
       CODEX_ARTIFACTS_DIR: ${CODEX_ARTIFACTS_DIR:-/workspace/artifacts}
       RUNTIME_STATE_FILE: ${RUNTIME_STATE_FILE:-/workspace/.codex-feishu-bot/runtime-state.json}
