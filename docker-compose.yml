@@ -46,12 +46,15 @@ services:
       FEISHU_VERIFICATION_TOKEN: ${FEISHU_VERIFICATION_TOKEN:-}
       FEISHU_ALLOWED_OPEN_IDS: ${FEISHU_ALLOWED_OPEN_IDS:?set FEISHU_ALLOWED_OPEN_IDS}
       FEISHU_ALLOW_GROUP_MESSAGES: ${FEISHU_ALLOW_GROUP_MESSAGES:-false}
+      QQ_MAIL_ADDRESS: ${QQ_MAIL_ADDRESS:-2609086461@qq.com}
+      QQ_MAIL_AUTH_CODE_FILE: ${QQ_MAIL_AUTH_CODE_FILE:-/run/secrets/codex-mail/qq-imap-auth-code}
     ports:
       - "127.0.0.1:${APP_PORT:-3000}:3000"
     volumes:
       - ${CODEX_WORKSPACE_HOST_PATH:-./.codex-local/workspace}:/workspace
       - ${CODEX_HOME_SOURCE:-codex-home}:/root/.codex
       - ${GIT_SSH_HOST_PATH:-./.codex-local/ssh}:/root/.ssh:ro
+      - ${MAIL_SECRETS_HOST_PATH:-./.codex-local/mail}:/run/secrets/codex-mail:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
       interval: 5s

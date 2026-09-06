@@ -35,6 +35,7 @@ RUN apt-get update \
     openssh-client \
     procps \
     python3 \
+    python3-venv \
     make \
     g++ \
     ripgrep \
