@@ -161,6 +161,34 @@ test("parseFeishuMessageEventResult extracts bot sender type for loop prevention
   assert.equal(result.message.senderType, "app");
 });
 
+test("parseFeishuMessageEventResult extracts an inbound image resource", () => {
+  const result = parseFeishuMessageEventResult({
+    event_type: "im.message.receive_v1",
+    sender: {
+      sender_id: { open_id: "ou_sender_image" },
+      sender_type: "user"
+    },
+    message: {
+      message_id: "om_image_1",
+      chat_id: "oc_image_1",
+      chat_type: "p2p",
+      message_type: "image",
+      content: '{"image_key":"img_image_1"}'
+    }
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assert.equal(result.message.messageType, "image");
+  assert.equal(result.message.text, "请查看我发送的图片。");
+  assert.deepEqual(result.message.attachments, [
+    { kind: "image", key: "img_image_1" }
+  ]);
+});
+
 test("parseFeishuMessageEventResult returns structured failure on invalid payload", () => {
   const result = parseFeishuMessageEventResult({
     foo: "bar"

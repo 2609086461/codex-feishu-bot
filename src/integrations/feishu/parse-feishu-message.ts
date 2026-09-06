@@ -69,6 +69,23 @@ function extractText(content: unknown): string {
   return pickString(content, ["text", "plain_text", "content"]) ?? "";
 }
 
+function parseContent(content: unknown): UnknownRecord | undefined {
+  if (isRecord(content)) {
+    return content;
+  }
+
+  if (typeof content !== "string") {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function summarizeShape(body: unknown): string | undefined {
   if (!isRecord(body)) {
     return typeof body;
@@ -99,6 +116,7 @@ function normalizeEventBody(
   messageId: string;
   chatId: string;
   chatType: string;
+  messageType: string;
   content: unknown;
   mentions: Array<UnknownRecord>;
 } | undefined {
@@ -125,6 +143,10 @@ function normalizeEventBody(
     pickString(message, ["chat_type", "chatType"]) ??
     pickString(scope, ["chat_type", "chatType"]) ??
     "group";
+  const messageType =
+    pickString(message, ["message_type", "messageType", "msg_type", "msgType"]) ??
+    pickString(scope, ["message_type", "messageType", "msg_type", "msgType"]) ??
+    "text";
 
   const sender =
     pickObject(scope, ["sender"]) ??
@@ -163,6 +185,7 @@ function normalizeEventBody(
     messageId,
     chatId,
     chatType,
+    messageType,
     content,
     mentions
   };
@@ -195,7 +218,21 @@ export function parseFeishuMessageEventResult(body: unknown): ParseFeishuMessage
       senderName: normalized.senderId,
       senderType: normalized.senderType,
       tenantKey: normalized.tenantKey,
-      text: extractText(normalized.content),
+      messageType: normalized.messageType,
+      text:
+        normalized.messageType === "image"
+          ? "请查看我发送的图片。"
+          : extractText(normalized.content),
+      attachments: (() => {
+        if (normalized.messageType !== "image") {
+          return [];
+        }
+
+        const imageKey = pickString(parseContent(normalized.content) ?? {}, ["image_key"]);
+        return imageKey
+          ? [{ kind: "image" as const, key: imageKey }]
+          : [];
+      })(),
       mentionsBot: normalized.mentions.length > 0,
       raw: body
     }

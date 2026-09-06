@@ -198,7 +198,12 @@ function buildTurnInput(
       type: "text",
       text: controllerInstructions,
       text_elements: []
-    }
+    },
+    ...(context.message.attachments ?? []).flatMap((attachment) =>
+      attachment.path
+        ? [{ type: "localImage", path: attachment.path, detail: "auto" }]
+        : []
+    )
   ];
 }
 
@@ -216,7 +221,12 @@ function buildSteerInput(context: CodexTurnContext) {
         context.message.text
       ].join("\n"),
       text_elements: []
-    }
+    },
+    ...(context.message.attachments ?? []).flatMap((attachment) =>
+      attachment.path
+        ? [{ type: "localImage", path: attachment.path, detail: "auto" }]
+        : []
+    )
   ];
 }
 

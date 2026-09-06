@@ -6,9 +6,17 @@ export interface IncomingChatMessage {
   senderName: string;
   senderType: string;
   tenantKey?: string;
+  messageType?: string;
   text: string;
+  attachments?: IncomingChatAttachment[];
   mentionsBot: boolean;
   raw: unknown;
+}
+
+export interface IncomingChatAttachment {
+  kind: "image";
+  key: string;
+  path?: string;
 }
 
 export interface ChatTask {
