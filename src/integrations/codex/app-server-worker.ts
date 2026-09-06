@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { isAbsolute, relative, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { Env } from "../../config/env.js";
 import type {
@@ -29,6 +30,44 @@ interface TurnStartResponse {
   turn: {
     id: string;
   };
+}
+
+const LOCAL_FEISHU_BRIDGE_PATH = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../scripts/feishu-bridge.mjs"
+);
+
+function feishuBridgeCommand(): string {
+  return process.platform === "win32"
+    ? `node "${LOCAL_FEISHU_BRIDGE_PATH}"`
+    : "node /opt/codex-tools/feishu-bridge.mjs";
+}
+
+function isThreadClosingError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /thread .* is closing|retry thread\/resume after the thread is closed/i.test(message);
+}
+
+async function resumeThreadWithRetry(
+  connection: AppServerWsConnection,
+  params: Record<string, unknown>
+): Promise<ThreadResponse> {
+  const delays = [100, 250, 500, 750, 1_000, 1_500, 2_000, 3_000];
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    try {
+      return await connection.request<ThreadResponse>("thread/resume", params);
+    } catch (error) {
+      lastError = error;
+      if (!isThreadClosingError(error) || attempt === delays.length) {
+        throw error;
+      }
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, delays[attempt]));
+    }
+  }
+
+  throw lastError;
 }
 
 interface ModelListResponse {
@@ -166,6 +205,7 @@ function buildTurnInput(
   artifactsDir: string,
   sandboxMode: Env["CODEX_APP_SERVER_SANDBOX"]
 ) {
+  const bridgeCommand = feishuBridgeCommand();
   const workspaceInstruction = sandboxMode === "danger-full-access"
     ? `- Your current working directory is ${context.workspaceId}. You may read, create, edit, move, and run files elsewhere on this computer when the user's request requires it.`
     : `- Your working directory is ${context.workspaceId}. Treat it as the only writable project/workspace root you should use.`;
@@ -185,8 +225,8 @@ function buildTurnInput(
     "- Emit exactly one final_answer for the final user-facing answer.",
     "- Do not repeat commentary or process summaries in final_answer.",
     "- Do not prefix final_answer with labels like '中间过程', '过程同步', '最终结论', or 'Final Answer'; the Feishu UI already labels the message type.",
-    `- If the user should receive a file, run \`node /opt/codex-tools/feishu-bridge.mjs send-file --chat-id ${context.message.chatId} --path <absolute_path>\` after writing it under ${artifactsDir}.`,
-    "- For direct Feishu OpenAPI calls such as Bitable or Sheets, run `node /opt/codex-tools/feishu-bridge.mjs openapi --method <METHOD> --path <OPENAPI_PATH> [--body <JSON>] [--query key=value]...`.",
+    `- If the user should receive a file, run \`${bridgeCommand} send-file --chat-id ${context.message.chatId} --path <absolute_path>\` after writing it under ${artifactsDir}.`,
+    `- For direct Feishu OpenAPI calls such as Bitable or Sheets, run \`${bridgeCommand} openapi --method <METHOD> --path <OPENAPI_PATH> [--body <JSON>] [--query key=value]...\`.`,
     "- Never tell the user to inspect files inside the workspace. Publish them when they matter to the user.",
     "",
     "User message:",
@@ -408,62 +448,7 @@ export class CodexAppServerWorker implements CodexWorker {
 
   async ensureThread(context: CodexTurnContext): Promise<string> {
     const requestedThreadId = context.session?.threadId;
-    if (!requestedThreadId || requestedThreadId.startsWith("pending:")) {
-      return requestedThreadId ?? `pending:${context.message.chatId}:${Date.now()}`;
-    }
-
-    await this.start();
-
-    const connection = new AppServerWsConnection(this.env.CODEX_APP_SERVER_LISTEN_URL, {
-      logger: this.logger,
-      label: "ensure-thread"
-    });
-    await connection.connect();
-
-    try {
-      this.logger?.info(
-        {
-          chatId: context.message.chatId,
-          messageId: context.message.messageId,
-          threadId: requestedThreadId,
-          workspaceId: context.workspaceId
-        },
-        "尝试恢复 Codex thread"
-      );
-      const response = await connection.request<ThreadResponse>("thread/resume", {
-        threadId: requestedThreadId,
-        model: this.modelFor(context),
-        cwd: context.workspaceId,
-        approvalPolicy: this.env.CODEX_APP_SERVER_APPROVAL_POLICY,
-        sandbox: this.env.CODEX_APP_SERVER_SANDBOX,
-        persistExtendedHistory: true
-      });
-
-      this.logger?.info(
-        {
-          chatId: context.message.chatId,
-          messageId: context.message.messageId,
-          threadId: response.thread.id
-        },
-        "Codex thread 恢复成功"
-      );
-      return response.thread.id;
-    } catch (error) {
-      const pendingThreadId = `pending:${context.message.chatId}:${Date.now()}`;
-      this.logger?.warn(
-        {
-          chatId: context.message.chatId,
-          messageId: context.message.messageId,
-          threadId: requestedThreadId,
-          pendingThreadId,
-          error: error instanceof Error ? error.message : String(error)
-        },
-        "恢复 Codex thread 失败，将在本轮 turn 中重新创建"
-      );
-      return pendingThreadId;
-    } finally {
-      await connection.close();
-    }
+    return requestedThreadId ?? `pending:${context.message.chatId}:${Date.now()}`;
   }
 
   async steerTurn(
@@ -624,7 +609,7 @@ export class CodexAppServerWorker implements CodexWorker {
           await new Promise((resolve) => setTimeout(resolve, attempt * 500));
           resumedConnection = createRunTurnConnection();
           await resumedConnection.connect();
-          await resumedConnection.request<ThreadResponse>("thread/resume", {
+          await resumeThreadWithRetry(resumedConnection, {
             threadId: state.currentThreadId,
             model: state.selectedModel,
             cwd: context.workspaceId,
@@ -782,19 +767,22 @@ export class CodexAppServerWorker implements CodexWorker {
         "开始执行 Codex turn"
       );
 
-      const actualThreadId = context.threadId.startsWith("pending:")
-        ? (
-            await connection.request<ThreadResponse>("thread/start", {
+      let actualThreadId: string;
+      if (context.threadId.startsWith("pending:")) {
+        actualThreadId = (
+          await connection.request<ThreadResponse>("thread/start", {
               model: state.selectedModel,
               cwd: context.workspaceId,
               approvalPolicy: this.env.CODEX_APP_SERVER_APPROVAL_POLICY,
               sandbox: this.env.CODEX_APP_SERVER_SANDBOX,
               experimentalRawEvents: false,
               persistExtendedHistory: true
-            })
-          ).thread.id
-        : (
-            await connection.request<ThreadResponse>("thread/resume", {
+          })
+        ).thread.id;
+      } else {
+        try {
+          actualThreadId = (
+            await resumeThreadWithRetry(connection, {
               threadId: context.threadId,
               model: state.selectedModel,
               cwd: context.workspaceId,
@@ -803,6 +791,28 @@ export class CodexAppServerWorker implements CodexWorker {
               persistExtendedHistory: true
             })
           ).thread.id;
+        } catch (error) {
+          this.logger?.warn(
+            {
+              chatId: context.message.chatId,
+              messageId: context.message.messageId,
+              threadId: context.threadId,
+              error: error instanceof Error ? error.message : String(error)
+            },
+            "Codex thread 无法恢复，自动创建替代 thread"
+          );
+          actualThreadId = (
+            await connection.request<ThreadResponse>("thread/start", {
+              model: state.selectedModel,
+              cwd: context.workspaceId,
+              approvalPolicy: this.env.CODEX_APP_SERVER_APPROVAL_POLICY,
+              sandbox: this.env.CODEX_APP_SERVER_SANDBOX,
+              experimentalRawEvents: false,
+              persistExtendedHistory: true
+            })
+          ).thread.id;
+        }
+      }
 
       this.logger?.info(
         {
