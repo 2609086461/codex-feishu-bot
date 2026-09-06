@@ -51,6 +51,7 @@ services:
     volumes:
       - ${CODEX_WORKSPACE_HOST_PATH:-./.codex-local/workspace}:/workspace
       - ${CODEX_HOME_SOURCE:-codex-home}:/root/.codex
+      - ${GIT_SSH_HOST_PATH:-./.codex-local/ssh}:/root/.ssh:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
       interval: 5s
