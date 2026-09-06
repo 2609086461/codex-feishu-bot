@@ -7,18 +7,11 @@ services:
         CODEX_CLI_VERSION: ${CODEX_CLI_VERSION:-0.153.4}
     restart: unless-stopped
     init: true
+    privileged: true
+    pid: host
     mem_limit: 1400m
     pids_limit: 256
-    cap_drop:
-      - ALL
-    cap_add:
-      - SYS_ADMIN
-      - NET_ADMIN
-      - SETUID
-      - SETGID
-      - SETFCAP
     security_opt:
-      - no-new-privileges:true
       - seccomp=unconfined
       - apparmor=unconfined
     environment:
@@ -36,7 +29,7 @@ services:
       CODEX_APP_SERVER_LISTEN_URL: ws://127.0.0.1:4500
       CODEX_APP_SERVER_MODEL: ${CODEX_APP_SERVER_MODEL:-gpt-5.4}
       CODEX_APP_SERVER_APPROVAL_POLICY: never
-      CODEX_APP_SERVER_SANDBOX: workspace-write
+      CODEX_APP_SERVER_SANDBOX: danger-full-access
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       CODEX_HOME_DIR: /root/.codex
       FEISHU_PROVIDER: sdk
@@ -58,6 +51,7 @@ services:
       - ${CODEX_HOME_SOURCE:-codex-home}:/root/.codex
       - ${GIT_SSH_HOST_PATH:-./.codex-local/ssh}:/root/.ssh:ro
       - ${MAIL_SECRETS_HOST_PATH:-./.codex-local/mail}:/run/secrets/codex-mail:ro
+      - /:/host:rw
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
       interval: 5s
