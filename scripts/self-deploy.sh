@@ -15,10 +15,10 @@ if [[ "${1:-}" == "--dry-run" ]]; then
 fi
 
 "$HOST_EXEC" test -x "$HOST_SCRIPT"
-"$HOST_EXEC" command -v systemd-run >/dev/null
+"$HOST_EXEC" test -x /usr/bin/systemd-run
 
 unit="codex-feishu-bot-deploy-$(date +%Y%m%d-%H%M%S)-${RANDOM}"
-"$HOST_EXEC" systemd-run \
+"$HOST_EXEC" /usr/bin/systemd-run \
   --unit="$unit" \
   --description="Codex Feishu bot self deployment" \
   --collect \
