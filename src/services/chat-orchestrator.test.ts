@@ -389,12 +389,13 @@ test("ChatOrchestrator ignores duplicated incoming message ids", async () => {
   assert.equal(conversationStore.list().length, 1);
 });
 
-test("ChatOrchestrator switches models without starting a Codex turn", async () => {
+test("ChatOrchestrator switches model and effort in two steps without starting a Codex turn", async () => {
   const sessionStore = new SessionStore();
   const runStore = new RunStore();
   const conversationStore = new ConversationStore();
   const projector = new MessageProjector(runStore, conversationStore);
   let runTurnCalls = 0;
+  const replies: string[] = [];
   let resolveReply: (() => void) | undefined;
   const replied = new Promise<void>((resolve) => {
     resolveReply = resolve;
@@ -430,8 +431,11 @@ test("ChatOrchestrator switches models without starting a Codex turn", async () 
     conversationStore,
     {
       async sendText(_chatId: string, content: string) {
+        replies.push(content);
         assert.match(content, /GPT Fast/);
-        resolveReply?.();
+        if (replies.length === 2) {
+          resolveReply?.();
+        }
         return "om_settings_1";
       },
       schedule() {
@@ -448,11 +452,15 @@ test("ChatOrchestrator switches models without starting a Codex turn", async () 
   );
 
   orchestrator.enqueue(createMessage({ text: "切换模型 GPT Fast" }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  orchestrator.enqueue(createMessage({ messageId: "om_effort_pick", text: "1" }));
   await replied;
 
   assert.equal(runTurnCalls, 0);
   assert.equal(sessionStore.get("oc_group_1")?.model, "gpt-fast");
   assert.equal(sessionStore.get("oc_group_1")?.modelDisplayName, "GPT Fast");
+  assert.equal(sessionStore.get("oc_group_1")?.reasoningEffort, "low");
+  assert.equal(sessionStore.get("oc_group_1")?.routingMode, "manual");
 });
 
 test("ChatOrchestrator switches to a model by replying with its menu number", async () => {
@@ -461,9 +469,9 @@ test("ChatOrchestrator switches to a model by replying with its menu number", as
   const conversationStore = new ConversationStore();
   const projector = new MessageProjector(runStore, conversationStore);
   const replies: string[] = [];
-  let resolveSecondReply: (() => void) | undefined;
-  const secondReply = new Promise<void>((resolve) => {
-    resolveSecondReply = resolve;
+  let resolveThirdReply: (() => void) | undefined;
+  const thirdReply = new Promise<void>((resolve) => {
+    resolveThirdReply = resolve;
   });
 
   const codexWorker: CodexWorker = {
@@ -502,8 +510,8 @@ test("ChatOrchestrator switches to a model by replying with its menu number", as
     {
       async sendText(_chatId: string, content: string) {
         replies.push(content);
-        if (replies.length === 2) {
-          resolveSecondReply?.();
+        if (replies.length === 3) {
+          resolveThirdReply?.();
         }
         return `om_settings_${replies.length}`;
       },
@@ -523,12 +531,73 @@ test("ChatOrchestrator switches to a model by replying with its menu number", as
   orchestrator.enqueue(createMessage({ messageId: "om_model_list", text: "模型" }));
   await new Promise((resolve) => setTimeout(resolve, 0));
   orchestrator.enqueue(createMessage({ messageId: "om_model_pick", text: "2" }));
-  await secondReply;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  orchestrator.enqueue(createMessage({ messageId: "om_effort_pick", text: "2" }));
+  await thirdReply;
 
   assert.match(replies[0] ?? "", /1\. GPT-5\.6-Sol/);
-  assert.match(replies[1] ?? "", /模型已切换为 GPT-5\.6-Terra/);
+  assert.match(replies[1] ?? "", /请选择思考强度/);
+  assert.match(replies[2] ?? "", /GPT-5\.6-Terra \+ 中等/);
   assert.equal(sessionStore.get("oc_group_1")?.model, "gpt-5.6-terra");
+  assert.equal(sessionStore.get("oc_group_1")?.reasoningEffort, "medium");
   assert.equal(sessionStore.get("oc_group_1")?.pendingModelOptions, undefined);
+});
+
+test("ChatOrchestrator uses an automatic route for a new turn", async () => {
+  const sessionStore = new SessionStore();
+  const runStore = new RunStore();
+  const conversationStore = new ConversationStore();
+  const projector = new MessageProjector(runStore, conversationStore);
+  let routed = 0;
+  let resolveTurn: (() => void) | undefined;
+  const completed = new Promise<void>((resolve) => {
+    resolveTurn = resolve;
+  });
+
+  const orchestrator = new ChatOrchestrator(
+    sessionStore,
+    runStore,
+    conversationStore,
+    {
+      schedule() {
+        return undefined;
+      },
+      async flushRun() {
+        return undefined;
+      }
+    } as never,
+    projector,
+    {
+      async routeTurn() {
+        routed += 1;
+        return {
+          model: "gpt-5.6-luna",
+          displayName: "GPT-5.6-Luna",
+          reasoningEffort: "low",
+          confidence: 0.93,
+          reason: "简单任务"
+        };
+      },
+      async ensureThread() {
+        return "thread_auto";
+      },
+      async *runTurn(context): AsyncGenerator<CodexEvent> {
+        assert.equal(context.session?.model, "gpt-5.6-luna");
+        assert.equal(context.session?.reasoningEffort, "low");
+        yield { kind: "run_status", status: "completed" };
+        resolveTurn?.();
+      }
+    },
+    "/workspace",
+    createLogger()
+  );
+
+  orchestrator.enqueue(createMessage({ messageId: "om_auto", text: "帮我改写一句话" }));
+  await completed;
+
+  assert.equal(routed, 1);
+  assert.equal(sessionStore.get("oc_group_1")?.routingMode, undefined);
+  assert.equal(sessionStore.get("oc_group_1")?.lastAutoRoute?.model, "gpt-5.6-luna");
 });
 
 test("ChatOrchestrator asks the user to disambiguate a model family", async () => {

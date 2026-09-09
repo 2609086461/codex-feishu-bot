@@ -4,10 +4,12 @@ export type ChatSettingsCommand =
   | { kind: "model_list" }
   | { kind: "model_set"; value: string }
   | { kind: "model_pick"; index: number }
+  | { kind: "auto_set" }
   | { kind: "reasoning_status" }
   | { kind: "reasoning_set"; enabled: boolean }
   | { kind: "effort_status" }
-  | { kind: "effort_set"; effort: ReasoningEffort };
+  | { kind: "effort_set"; effort: ReasoningEffort }
+  | { kind: "effort_pick"; index: number };
 
 function normalizeToggle(value: string): boolean | undefined {
   const normalized = value.trim().toLowerCase();

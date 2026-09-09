@@ -6,6 +6,7 @@ import type { Env } from "../../config/env.js";
 import type {
   CodexEvent,
   CodexModelInfo,
+  CodexRouteDecision,
   CodexWorkspaceProject,
   RateLimitWindow,
   ThreadTokenUsage
@@ -13,6 +14,11 @@ import type {
 import { AsyncEventQueue } from "./async-event-queue.js";
 import { AppServerWsConnection } from "./app-server-ws-connection.js";
 import type { CodexTurnContext, CodexWorker } from "./codex-worker.js";
+import {
+  buildRouterPrompt,
+  normalizeRouteDecision,
+  pickRouterModel
+} from "./model-router.js";
 
 interface LoggerLike {
   info(message: unknown, ...args: unknown[]): void;
@@ -138,6 +144,10 @@ interface ThreadItem {
   status?: string;
   changes?: Array<{
     path: string;
+  }>;
+  content?: Array<{
+    type?: string;
+    text?: string;
   }>;
 }
 
@@ -314,6 +324,157 @@ export class CodexAppServerWorker implements CodexWorker {
       return models;
     } finally {
       await connection.close();
+    }
+  }
+
+  async routeTurn(context: CodexTurnContext): Promise<CodexRouteDecision> {
+    const models = (await this.listModels()).filter((model) => !model.hidden);
+    const routerModel = pickRouterModel(models);
+    const fallback = normalizeRouteDecision({}, models);
+    if (!routerModel) {
+      return fallback;
+    }
+
+    let routerThreadId: string | undefined;
+    let routerTurnId: string | undefined;
+    let responseText = "";
+    let resolveCompletion: (() => void) | undefined;
+    let rejectCompletion: ((error: Error) => void) | undefined;
+    const completion = new Promise<void>((resolvePromise, rejectPromise) => {
+      resolveCompletion = resolvePromise;
+      rejectCompletion = rejectPromise;
+    });
+    let connection!: AppServerWsConnection;
+    connection = new AppServerWsConnection(this.env.CODEX_APP_SERVER_LISTEN_URL, {
+      logger: this.logger,
+      label: "auto-model-router",
+      onNotification: (notification) => {
+        const params = (notification.params ?? {}) as Record<string, unknown>;
+        const targetThreadId = typeof params.threadId === "string" ? params.threadId : undefined;
+        if (routerThreadId && targetThreadId && targetThreadId !== routerThreadId) {
+          return;
+        }
+
+        if (notification.method === "item/completed") {
+          const item = params.item as ThreadItem | undefined;
+          if (item?.type === "agentMessage" && typeof item.text === "string") {
+            responseText = item.text;
+          }
+          return;
+        }
+
+        if (notification.method === "turn/completed") {
+          const turn = params.turn as TurnCompletedNotification["turn"] & { id?: string };
+          if (routerTurnId && turn.id && turn.id !== routerTurnId) {
+            return;
+          }
+          if (turn.status === "completed") {
+            resolveCompletion?.();
+          } else {
+            rejectCompletion?.(new Error(turn.error?.message ?? `自动路由 turn 状态：${turn.status}`));
+          }
+          return;
+        }
+
+        if (notification.method === "error" && params.willRetry !== true) {
+          const error = params.error as { message?: string } | undefined;
+          rejectCompletion?.(new Error(error?.message ?? "自动路由失败"));
+        }
+      },
+      onRequest: (request) => {
+        connection.respondError(request.id, -32000, "自动路由不允许调用工具");
+      }
+    });
+
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      await connection.connect();
+      const recentContext = await this.readRoutingContext(connection, context.session?.threadId);
+      routerThreadId = (
+        await connection.request<ThreadResponse>("thread/start", {
+          model: routerModel.model,
+          cwd: context.workspaceId,
+          approvalPolicy: "never",
+          sandbox: "read-only",
+          ephemeral: true,
+          experimentalRawEvents: false,
+          persistExtendedHistory: false,
+          developerInstructions: "你是任务路由器，只能输出指定 JSON，禁止调用任何工具。"
+        })
+      ).thread.id;
+
+      const prompt = buildRouterPrompt(
+        context.message.text,
+        recentContext,
+        (context.message.attachments ?? []).map((attachment) => attachment.kind),
+        models
+      );
+      const started = await connection.request<TurnStartResponse>("turn/start", {
+        threadId: routerThreadId,
+        input: [{ type: "text", text: prompt, text_elements: [] }],
+        model: routerModel.model,
+        effort: "low",
+        summary: "none",
+        cwd: context.workspaceId,
+        approvalPolicy: "never",
+        sandboxPolicy: {
+          type: "readOnly",
+          access: { type: "fullAccess" }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["model", "effort", "confidence", "reason"],
+          properties: {
+            model: { type: "string", enum: models.map((model) => model.model) },
+            effort: { type: "string", enum: ["low", "medium", "high", "xhigh", "max", "ultra"] },
+            confidence: { type: "number", minimum: 0, maximum: 1 },
+            reason: { type: "string", maxLength: 80 }
+          }
+        }
+      });
+      routerTurnId = started.turn.id;
+
+      await Promise.race([
+        completion,
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error("自动路由超时")), 20_000);
+        })
+      ]);
+
+      const jsonText = responseText.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+      const decision = normalizeRouteDecision(JSON.parse(jsonText), models);
+      this.logger?.info(
+        {
+          chatId: context.message.chatId,
+          messageId: context.message.messageId,
+          routerModel: routerModel.model,
+          model: decision.model,
+          effort: decision.reasoningEffort,
+          confidence: decision.confidence,
+          reason: decision.reason
+        },
+        "快模型已完成自动路由"
+      );
+      return decision;
+    } catch (error) {
+      this.logger?.warn(
+        {
+          chatId: context.message.chatId,
+          messageId: context.message.messageId,
+          routerModel: routerModel.model,
+          error: error instanceof Error ? error.message : String(error),
+          fallbackModel: fallback.model,
+          fallbackEffort: fallback.reasoningEffort
+        },
+        "自动路由失败，使用平衡回退"
+      );
+      return fallback;
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      await connection.close().catch(() => undefined);
     }
   }
 
@@ -1410,6 +1571,46 @@ export class CodexAppServerWorker implements CodexWorker {
 
   private modelFor(context: CodexTurnContext): string {
     return context.session?.model ?? this.env.CODEX_APP_SERVER_MODEL;
+  }
+
+  private async readRoutingContext(
+    connection: AppServerWsConnection,
+    threadId?: string
+  ): Promise<string> {
+    if (!threadId || threadId.startsWith("pending:")) {
+      return "";
+    }
+
+    try {
+      const response = await connection.request<ThreadReadResponse>("thread/read", {
+        threadId,
+        includeTurns: true
+      });
+      const excerpts = response.thread.turns
+        .slice(-3)
+        .flatMap((turn) => turn.items ?? [])
+        .flatMap((item) => {
+          if (typeof item.text === "string" && item.text.trim()) {
+            return [item.text.trim()];
+          }
+          const content = (item.content ?? [])
+            .flatMap((part) => typeof part.text === "string" ? [part.text.trim()] : [])
+            .filter(Boolean)
+            .join(" ");
+          return content ? [content] : [];
+        })
+        .slice(-4);
+      return excerpts.join(" | ").slice(-1_200);
+    } catch (error) {
+      this.logger?.info(
+        {
+          threadId,
+          error: error instanceof Error ? error.message : String(error)
+        },
+        "自动路由未读取到短上下文，仅使用当前消息"
+      );
+      return "";
+    }
   }
 
   private async readRateLimitWindows(

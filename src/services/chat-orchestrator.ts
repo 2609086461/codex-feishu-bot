@@ -5,10 +5,13 @@ import type {
   ChatProject,
   ChatSession,
   ChatTask,
+  CodexModelInfo,
   CodexWorkspaceProject,
-  IncomingChatMessage
+  IncomingChatMessage,
+  ReasoningEffort
 } from "../domain/types.js";
 import type { CodexWorker } from "../integrations/codex/codex-worker.js";
+import { reasoningEffortsFor } from "../integrations/codex/model-router.js";
 import { ConversationStore } from "../stores/conversation-store.js";
 import { RunStore } from "../stores/run-store.js";
 import { SessionStore } from "../stores/session-store.js";
@@ -20,6 +23,7 @@ import {
 import {
   formatReasoningEffort,
   normalizeModelName,
+  normalizeReasoningEffort,
   parseChatSettingsCommand,
   type ChatSettingsCommand
 } from "./chat-settings-command.js";
@@ -102,13 +106,40 @@ export class ChatOrchestrator {
         Number.isFinite(pendingSelectionAt) &&
         Date.now() - pendingSelectionAt <= 10 * 60 * 1000
     );
-    const settingsCommand = parseChatSettingsCommand(message.text) ??
-      (!hasValidPendingNavigation && hasValidPendingModelSelection && numericSelection
-        ? {
-            kind: "model_pick" as const,
-            index: Number(numericSelection[0]) - 1
-          }
-        : undefined);
+    const pendingEffortAt = existingSession?.pendingEffortSelectionAt
+      ? Date.parse(existingSession.pendingEffortSelectionAt)
+      : Number.NaN;
+    const hasValidPendingEffortSelection = Boolean(
+      existingSession?.pendingModelForEffort &&
+        existingSession.pendingEffortOptions?.length &&
+        Number.isFinite(pendingEffortAt) &&
+        Date.now() - pendingEffortAt <= 10 * 60 * 1000
+    );
+    let settingsCommand = parseChatSettingsCommand(message.text);
+    if (!settingsCommand && !hasValidPendingNavigation && hasValidPendingEffortSelection) {
+      const namedEffort = normalizeReasoningEffort(message.text);
+      if (numericSelection) {
+        settingsCommand = {
+          kind: "effort_pick",
+          index: Number(numericSelection[0]) - 1
+        };
+      } else if (namedEffort) {
+        settingsCommand = {
+          kind: "effort_pick",
+          index: existingSession?.pendingEffortOptions?.indexOf(namedEffort) ?? -1
+        };
+      }
+    }
+    if (!settingsCommand && !hasValidPendingNavigation && hasValidPendingModelSelection) {
+      if (/^自动$/i.test(message.text.trim()) || numericSelection?.[0] === "0") {
+        settingsCommand = { kind: "auto_set" };
+      } else if (numericSelection) {
+        settingsCommand = {
+          kind: "model_pick",
+          index: Number(numericSelection[0]) - 1
+        };
+      }
+    }
     const workspaceCommand = parseWorkspaceCommand(message.text) ??
       (!settingsCommand && hasValidPendingNavigation && numericSelection
         ? {
@@ -145,12 +176,33 @@ export class ChatOrchestrator {
   }
 
   private async handleMessage(message: IncomingChatMessage): Promise<void> {
-    const existingSession = this.ensureWorkspaceState(message.chatId);
+    let existingSession = this.ensureWorkspaceState(message.chatId);
     const workspaceId = existingSession.workspaceId;
+    let effectiveSession = existingSession;
+    if ((existingSession.routingMode ?? "auto") === "auto" && this.codexWorker.routeTurn) {
+      const decision = await this.codexWorker.routeTurn({
+        session: existingSession,
+        workspaceId,
+        message
+      });
+      existingSession = this.sessionStore.update(message.chatId, {
+        lastAutoRoute: {
+          ...decision,
+          routedAt: new Date().toISOString()
+        }
+      }) ?? existingSession;
+      effectiveSession = {
+        ...existingSession,
+        model: decision.model,
+        modelDisplayName: decision.displayName,
+        reasoningEffort: decision.reasoningEffort
+      };
+    }
+
     const threadId = existingSession.threadId.startsWith("pending:")
       ? existingSession.threadId
       : await this.codexWorker.ensureThread({
-          session: existingSession,
+          session: effectiveSession,
           workspaceId,
           message
         });
@@ -174,7 +226,7 @@ export class ChatOrchestrator {
 
     try {
       for await (const event of this.codexWorker.runTurn({
-        session: this.sessionStore.get(message.chatId),
+        session: effectiveSession,
         workspaceId,
         message,
         threadId
@@ -379,6 +431,39 @@ export class ChatOrchestrator {
     command: ChatSettingsCommand
   ): Promise<void> {
     try {
+      if (command.kind === "auto_set") {
+        const session = this.ensureSession(message.chatId);
+        this.sessionStore.update(message.chatId, {
+          routingMode: "auto",
+          pendingModelOptions: undefined,
+          pendingModelSelectionAt: undefined,
+          pendingModelForEffort: undefined,
+          pendingEffortOptions: undefined,
+          pendingEffortSelectionAt: undefined
+        });
+        const suffix = session.activeRunId ? "，从下一个任务开始生效" : "";
+        await this.deliveryService.sendText(
+          message.chatId,
+          `已开启自动模式${suffix}：每条新任务先由快模型判断，再自动选择模型和思考强度。`
+        );
+        return;
+      }
+
+      if (command.kind === "effort_pick") {
+        const session = this.ensureSession(message.chatId);
+        const pendingModel = session.pendingModelForEffort;
+        const effort = session.pendingEffortOptions?.[command.index];
+        if (!pendingModel || !effort) {
+          await this.deliveryService.sendText(
+            message.chatId,
+            "这个序号不在刚才的思考强度列表中。回复“模型”重新选择。"
+          );
+          return;
+        }
+        await this.applyManualSelection(message.chatId, pendingModel, effort, session);
+        return;
+      }
+
       if (command.kind === "effort_status" || command.kind === "effort_set") {
         const session = this.ensureSession(message.chatId);
         const effort = command.kind === "effort_set"
@@ -387,7 +472,8 @@ export class ChatOrchestrator {
 
         if (command.kind === "effort_set") {
           this.sessionStore.update(message.chatId, {
-            reasoningEffort: effort
+            reasoningEffort: effort,
+            routingMode: "manual"
           });
         }
 
@@ -434,7 +520,9 @@ export class ChatOrchestrator {
       const configuredDefault = this.codexWorker.getDefaultModel?.() ?? "Default";
 
       if (command.kind === "model_list") {
-        const currentModel = session?.modelDisplayName ?? session?.model ?? configuredDefault;
+        const currentModel = (session.routingMode ?? "auto") === "auto"
+          ? `自动（上次：${session.lastAutoRoute?.displayName ?? "尚未运行"}）`
+          : (session.modelDisplayName ?? session.model ?? configuredDefault);
         const lines = models.map((model, index) => {
           const defaultLabel = model.isDefault ? "（推荐）" : "";
           return `${index + 1}. ${model.displayName}${defaultLabel}`;
@@ -443,12 +531,13 @@ export class ChatOrchestrator {
         await this.deliveryService.sendText(
           message.chatId,
           [
-            `当前模型：${currentModel}`,
+            `当前模式：${currentModel}`,
             "",
-            "可用模型：",
+            "0. 自动选择模型和思考强度",
+            "手动模型：",
             ...lines,
             "",
-            "10 分钟内直接回复序号即可切换，也可以回复完整模型名称；回复“模型 默认”恢复服务器默认模型。"
+            "10 分钟内回复序号或模型名称。选择手动模型后，我会再让你选择思考强度。"
           ].join("\n")
         );
         return;
@@ -474,23 +563,23 @@ export class ChatOrchestrator {
           return;
         }
 
-        await this.applyModelSelection(message.chatId, selected, session);
+        await this.beginManualModelSelection(message.chatId, selected);
         return;
       }
 
       const requested = normalizeModelName(command.value);
+      if (["auto", "自动", "自动选择"].includes(requested)) {
+        await this.handleSettingsCommand(message, { kind: "auto_set" });
+        return;
+      }
       if (["default", "默认", "服务器默认"].includes(requested)) {
-        this.sessionStore.update(message.chatId, {
-          model: undefined,
-          modelDisplayName: undefined,
-          pendingModelOptions: undefined,
-          pendingModelSelectionAt: undefined
-        });
-        const suffix = session.activeRunId ? "，从下一个任务开始生效" : "";
-        await this.deliveryService.sendText(
-          message.chatId,
-          `已恢复服务器默认模型：${configuredDefault}${suffix}。`
-        );
+        const defaultModel = models.find((model) => model.model === configuredDefault) ??
+          models.find((model) => model.isDefault);
+        if (!defaultModel) {
+          await this.deliveryService.sendText(message.chatId, "当前没有找到服务器默认模型。");
+          return;
+        }
+        await this.beginManualModelSelection(message.chatId, defaultModel);
         return;
       }
 
@@ -510,7 +599,7 @@ export class ChatOrchestrator {
           if (!onlyCandidate) {
             return;
           }
-          await this.applyModelSelection(message.chatId, onlyCandidate, session);
+          await this.beginManualModelSelection(message.chatId, onlyCandidate);
           return;
         }
         if (candidates.length > 1) {
@@ -533,7 +622,7 @@ export class ChatOrchestrator {
         return;
       }
 
-      await this.applyModelSelection(message.chatId, selected, session);
+      await this.beginManualModelSelection(message.chatId, selected);
     } catch (error) {
       const errorText = error instanceof Error ? error.message : String(error);
       this.logger.error(
@@ -558,6 +647,9 @@ export class ChatOrchestrator {
     this.sessionStore.update(chatId, {
       pendingModelOptions: models.map(({ model, displayName }) => ({ model, displayName })),
       pendingModelSelectionAt: new Date().toISOString(),
+      pendingModelForEffort: undefined,
+      pendingEffortOptions: undefined,
+      pendingEffortSelectionAt: undefined,
       pendingNavigation: undefined
     });
   }
@@ -565,25 +657,61 @@ export class ChatOrchestrator {
   private clearPendingModelOptions(chatId: string): void {
     this.sessionStore.update(chatId, {
       pendingModelOptions: undefined,
-      pendingModelSelectionAt: undefined
+      pendingModelSelectionAt: undefined,
+      pendingModelForEffort: undefined,
+      pendingEffortOptions: undefined,
+      pendingEffortSelectionAt: undefined
     });
   }
 
-  private async applyModelSelection(
+  private async beginManualModelSelection(
+    chatId: string,
+    selected: CodexModelInfo
+  ): Promise<void> {
+    const effortOptions = reasoningEffortsFor(selected);
+    this.sessionStore.update(chatId, {
+      pendingModelOptions: undefined,
+      pendingModelSelectionAt: undefined,
+      pendingModelForEffort: {
+        model: selected.model,
+        displayName: selected.displayName
+      },
+      pendingEffortOptions: effortOptions,
+      pendingEffortSelectionAt: new Date().toISOString(),
+      pendingNavigation: undefined
+    });
+    await this.deliveryService.sendText(
+      chatId,
+      [
+        `已选择模型：${selected.displayName}`,
+        "",
+        "请选择思考强度：",
+        ...effortOptions.map((effort, index) => `${index + 1}. ${formatReasoningEffort(effort)}`),
+        "",
+        "10 分钟内回复序号或档位名称；完成后才会切换为手动模式。"
+      ].join("\n")
+    );
+  }
+
+  private async applyManualSelection(
     chatId: string,
     selected: { model: string; displayName: string },
+    effort: ReasoningEffort,
     session: ChatSession
   ): Promise<void> {
     this.sessionStore.update(chatId, {
+      routingMode: "manual",
       model: selected.model,
       modelDisplayName: selected.displayName,
-      pendingModelOptions: undefined,
-      pendingModelSelectionAt: undefined
+      reasoningEffort: effort,
+      pendingModelForEffort: undefined,
+      pendingEffortOptions: undefined,
+      pendingEffortSelectionAt: undefined
     });
     const suffix = session.activeRunId ? "，从下一个任务开始生效" : "";
     await this.deliveryService.sendText(
       chatId,
-      `模型已切换为 ${selected.displayName}${suffix}。`
+      `已切换为手动模式：${selected.displayName} + ${formatReasoningEffort(effort)}${suffix}。`
     );
   }
 

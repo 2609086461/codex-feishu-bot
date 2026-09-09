@@ -80,6 +80,21 @@ export interface ChatSession {
     displayName: string;
   }>;
   pendingModelSelectionAt?: string;
+  pendingModelForEffort?: {
+    model: string;
+    displayName: string;
+  };
+  pendingEffortOptions?: ReasoningEffort[];
+  pendingEffortSelectionAt?: string;
+  routingMode?: "auto" | "manual";
+  lastAutoRoute?: {
+    model: string;
+    displayName: string;
+    reasoningEffort: ReasoningEffort;
+    confidence: number;
+    reason: string;
+    routedAt: string;
+  };
   showReasoningSummary?: boolean;
   reasoningEffort?: ReasoningEffort;
   activeRunId?: string;
@@ -96,6 +111,21 @@ export interface CodexModelInfo {
   description: string;
   hidden: boolean;
   isDefault: boolean;
+  defaultReasoningEffort?: ReasoningEffort;
+  supportedReasoningEfforts?: Array<
+    | ReasoningEffort
+    | {
+        reasoningEffort: ReasoningEffort;
+      }
+  >;
+}
+
+export interface CodexRouteDecision {
+  model: string;
+  displayName: string;
+  reasoningEffort: ReasoningEffort;
+  confidence: number;
+  reason: string;
 }
 
 export interface TokenUsageBreakdown {

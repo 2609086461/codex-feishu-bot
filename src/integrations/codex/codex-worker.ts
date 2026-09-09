@@ -2,6 +2,7 @@ import type {
   ChatSession,
   CodexEvent,
   CodexModelInfo,
+  CodexRouteDecision,
   CodexWorkspaceProject,
   IncomingChatMessage
 } from "../../domain/types.js";
@@ -17,6 +18,7 @@ export interface CodexWorker {
   close?(): Promise<void>;
   getDefaultModel?(): string;
   listModels?(): Promise<CodexModelInfo[]>;
+  routeTurn?(context: CodexTurnContext): Promise<CodexRouteDecision>;
   listWorkspaceProjects?(): Promise<CodexWorkspaceProject[]>;
   ensureThread(context: CodexTurnContext): Promise<string>;
   steerTurn?(context: CodexTurnContext & { threadId: string; turnId: string }): Promise<void>;
