@@ -431,6 +431,22 @@ export class ChatOrchestrator {
         ),
         `已切换到项目“${project.name}”，继续任务“${task.name}”。`
       );
+      this.rememberNavigation(action.chatId, "task", project.tasks.map((item) => item.id));
+      const taskOptions = project.tasks.map((item) => ({
+        id: item.id,
+        name: item.name,
+        current: item.id === task.id
+      }));
+      await this.sendCardOrText(
+        action.chatId,
+        renderTaskSelectionCard({ projectName: project.name, tasks: taskOptions }),
+        [
+          `已进入项目“${project.name}”，请选择任务：`,
+          ...taskOptions.map((item, index) =>
+            `${index + 1}. ${item.name}${item.current ? "（当前）" : ""}`
+          )
+        ].join("\n")
+      );
     } catch (error) {
       await this.reportCardActionFailure(action, error);
     }
@@ -1276,6 +1292,38 @@ export class ChatOrchestrator {
           message.chatId,
           renderTaskSelectionCard({ projectName: project.name, tasks: taskOptions }),
           [`当前项目：${project.name}`, "任务列表：", ...lines, "", "10 分钟内回复序号切换；发送“新任务 名称”可创建独立任务。"].join("\n")
+        );
+        return;
+      }
+
+      if (command.kind === "task_rename") {
+        const name = this.validateName(command.value, "任务", 60);
+        if (project.tasks.some((task) => task.id !== project.activeTaskId && task.name === name)) {
+          await this.deliveryService.sendText(
+            message.chatId,
+            "当前项目已经存在同名任务，请换一个名称。"
+          );
+          return;
+        }
+        const activeTask = project.tasks.find((task) => task.id === project.activeTaskId);
+        if (!activeTask) {
+          await this.deliveryService.sendText(message.chatId, "当前项目没有可重命名的任务。");
+          return;
+        }
+        const renamedTask = {
+          ...activeTask,
+          name,
+          updatedAt: new Date().toISOString()
+        };
+        const nextProject = {
+          ...project,
+          tasks: project.tasks.map((task) => task.id === activeTask.id ? renamedTask : task),
+          updatedAt: renamedTask.updatedAt
+        };
+        this.activateProjectTask(message.chatId, session, nextProject, renamedTask);
+        await this.deliveryService.sendText(
+          message.chatId,
+          `任务已从“${activeTask.name}”重命名为“${name}”。`
         );
         return;
       }

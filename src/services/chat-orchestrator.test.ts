@@ -964,9 +964,6 @@ test("ChatOrchestrator switches projects and tasks through cards", async () => {
   }), true);
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(sessionStore.get("oc_group_1")?.workspaceId, "/workspace/b");
-
-  orchestrator.enqueue(createMessage({ messageId: "om_task_menu", text: "任务" }));
-  await new Promise((resolve) => setTimeout(resolve, 0));
   assert.match(sentCards[1] ?? "", /task_select/);
   assert.equal(orchestrator.enqueueCardAction({
     chatId: "oc_group_1",
@@ -979,6 +976,16 @@ test("ChatOrchestrator switches projects and tasks through cards", async () => {
 
   assert.equal(sessionStore.get("oc_group_1")?.threadId, "thread_b2");
   assert.equal(updatedCards.length, 2);
+
+  orchestrator.enqueue(createMessage({
+    messageId: "om_task_rename",
+    text: "任务改名 Codex机器人"
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const activeProject = sessionStore.get("oc_group_1")?.projects?.find(
+    (project) => project.id === "project-b"
+  );
+  assert.equal(activeProject?.tasks.find((task) => task.id === "task-b2")?.name, "Codex机器人");
 });
 
 test("ChatOrchestrator starts a pending task in runTurn without precreating a thread", async () => {

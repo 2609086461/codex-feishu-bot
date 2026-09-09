@@ -39,4 +39,8 @@ test("parseWorkspaceCommand parses task commands", () => {
     kind: "task_select",
     value: "邮件状态同步"
   });
+  assert.deepEqual(parseWorkspaceCommand("任务改名 Codex机器人"), {
+    kind: "task_rename",
+    value: "Codex机器人"
+  });
 });

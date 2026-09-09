@@ -6,6 +6,7 @@ export type WorkspaceCommand =
   | { kind: "project_select"; value: string }
   | { kind: "task_list" }
   | { kind: "task_create"; value: string }
+  | { kind: "task_rename"; value: string }
   | { kind: "task_select"; value: string }
   | { kind: "navigation_pick"; index: number };
 
@@ -46,6 +47,11 @@ export function parseWorkspaceCommand(text: string): WorkspaceCommand | undefine
   const taskCreate = trimmed.match(/^(?:新任务|新建任务|创建任务)\s*[:：]?\s+(.+)$/i);
   if (taskCreate?.[1]?.trim()) {
     return { kind: "task_create", value: taskCreate[1].trim() };
+  }
+
+  const taskRename = trimmed.match(/^(?:重命名任务|任务重命名|任务改名)\s*[:：]?\s+(.+)$/i);
+  if (taskRename?.[1]?.trim()) {
+    return { kind: "task_rename", value: taskRename[1].trim() };
   }
 
   const projectSelect = trimmed.match(/^(?:项目|\/project)\s*[:：]?\s+(.+)$/i);
