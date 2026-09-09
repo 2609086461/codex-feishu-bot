@@ -16,7 +16,9 @@ import { reasoningEffortsFor } from "../integrations/codex/model-router.js";
 import {
   renderEffortSelectionCard,
   renderModelSelectionCard,
-  renderSelectionConfirmedCard
+  renderProjectSelectionCard,
+  renderSelectionConfirmedCard,
+  renderTaskSelectionCard
 } from "../integrations/feishu/feishu-card-renderer.js";
 import { ConversationStore } from "../stores/conversation-store.js";
 import { RunStore } from "../stores/run-store.js";
@@ -232,6 +234,42 @@ export class ChatOrchestrator {
       return true;
     }
 
+    if (kind === "project_select") {
+      const projectId = typeof action.value.projectId === "string" ? action.value.projectId : "";
+      const project = session?.projects?.find((item) => item.id === projectId);
+      if (
+        !session ||
+        session.activeRunId ||
+        !project ||
+        !this.hasFreshNavigation(session, "project") ||
+        !session.pendingNavigation?.ids.includes(projectId)
+      ) {
+        return false;
+      }
+      this.sessionStore.update(action.chatId, { pendingNavigation: undefined });
+      void this.applyProjectCardSelection(action, session, project);
+      return true;
+    }
+
+    if (kind === "task_select") {
+      const taskId = typeof action.value.taskId === "string" ? action.value.taskId : "";
+      const project = session ? this.activeProject(session) : undefined;
+      const task = project?.tasks.find((item) => item.id === taskId);
+      if (
+        !session ||
+        session.activeRunId ||
+        !project ||
+        !task ||
+        !this.hasFreshNavigation(session, "task") ||
+        !session.pendingNavigation?.ids.includes(taskId)
+      ) {
+        return false;
+      }
+      this.sessionStore.update(action.chatId, { pendingNavigation: undefined });
+      void this.applyTaskCardSelection(action, session, project, task);
+      return true;
+    }
+
     return false;
   }
 
@@ -253,6 +291,18 @@ export class ChatOrchestrator {
     return Boolean(
       session.pendingModelForEffort &&
         session.pendingEffortOptions?.length &&
+        Number.isFinite(createdAt) &&
+        Date.now() - createdAt <= 10 * 60 * 1000
+    );
+  }
+
+  private hasFreshNavigation(session: ChatSession, kind: "project" | "task"): boolean {
+    const createdAt = session.pendingNavigation?.createdAt
+      ? Date.parse(session.pendingNavigation.createdAt)
+      : Number.NaN;
+    return Boolean(
+      session.pendingNavigation?.kind === kind &&
+        session.pendingNavigation.ids.length &&
         Number.isFinite(createdAt) &&
         Date.now() - createdAt <= 10 * 60 * 1000
     );
@@ -352,6 +402,60 @@ export class ChatOrchestrator {
         action,
         renderSelectionConfirmedCard("切换完成", `手动模式：**${summary}**`),
         `已切换为手动模式：${summary}。`
+      );
+    } catch (error) {
+      await this.reportCardActionFailure(action, error);
+    }
+  }
+
+  private async applyProjectCardSelection(
+    action: IncomingCardAction,
+    session: ChatSession,
+    project: ChatProject
+  ): Promise<void> {
+    try {
+      const task = project.tasks.find((item) => item.id === project.activeTaskId) ?? project.tasks[0];
+      if (!task) {
+        await this.deliveryService.sendText(
+          action.chatId,
+          "这个项目还没有可用任务，请发送“新任务 名称”。"
+        );
+        return;
+      }
+      this.activateProjectTask(action.chatId, session, project, task);
+      await this.updateCardOrSendText(
+        action,
+        renderSelectionConfirmedCard(
+          "项目已切换",
+          `当前项目：**${project.name}**\n\n当前任务：**${task.name}**`
+        ),
+        `已切换到项目“${project.name}”，继续任务“${task.name}”。`
+      );
+    } catch (error) {
+      await this.reportCardActionFailure(action, error);
+    }
+  }
+
+  private async applyTaskCardSelection(
+    action: IncomingCardAction,
+    session: ChatSession,
+    project: ChatProject,
+    task: ChatTask
+  ): Promise<void> {
+    try {
+      const nextProject = {
+        ...project,
+        activeTaskId: task.id,
+        updatedAt: new Date().toISOString()
+      };
+      this.activateProjectTask(action.chatId, session, nextProject, task);
+      await this.updateCardOrSendText(
+        action,
+        renderSelectionConfirmedCard(
+          "任务已切换",
+          `项目：**${project.name}**\n\n当前任务：**${task.name}**`
+        ),
+        `已切换到任务“${task.name}”，后续消息会延续该任务的上下文。`
       );
     } catch (error) {
       await this.reportCardActionFailure(action, error);
@@ -1000,7 +1104,7 @@ export class ChatOrchestrator {
       if (command.kind === "project_list") {
         session = await this.mergeCodexWorkspaceProjects(message.chatId, session);
         this.rememberNavigation(message.chatId, "project", session.projects?.map((item) => item.id) ?? []);
-        const lines = (session.projects ?? []).map((project, index) => {
+        const projectOptions = (session.projects ?? []).map((project) => {
           const source = project.git
             ? `Git ${project.git.branch}@${project.git.lastCommit.slice(0, 8)}`
             : project.codexProjectId
@@ -1008,10 +1112,19 @@ export class ChatOrchestrator {
               : project.workspaceId === this.defaultWorkspace
                 ? "临时工作区"
                 : "服务器文件";
-          return `${index + 1}. ${project.name} [${source}]${project.id === session.activeProjectId ? "（当前）" : ""}`;
+          return {
+            id: project.id,
+            name: project.name,
+            detail: source,
+            current: project.id === session.activeProjectId
+          };
         });
-        await this.deliveryService.sendText(
+        const lines = projectOptions.map((project, index) =>
+          `${index + 1}. ${project.name} [${project.detail}]${project.current ? "（当前）" : ""}`
+        );
+        await this.sendCardOrText(
           message.chatId,
+          renderProjectSelectionCard({ projects: projectOptions }),
           [
             "项目列表：",
             ...lines,
@@ -1151,12 +1264,17 @@ export class ChatOrchestrator {
 
       if (command.kind === "task_list") {
         this.rememberNavigation(message.chatId, "task", project.tasks.map((item) => item.id));
-        const lines = project.tasks.map(
-          (task, index) =>
-            `${index + 1}. ${task.name}${task.id === project.activeTaskId ? "（当前）" : ""}`
+        const taskOptions = project.tasks.map((task) => ({
+          id: task.id,
+          name: task.name,
+          current: task.id === project.activeTaskId
+        }));
+        const lines = taskOptions.map((task, index) =>
+          `${index + 1}. ${task.name}${task.current ? "（当前）" : ""}`
         );
-        await this.deliveryService.sendText(
+        await this.sendCardOrText(
           message.chatId,
+          renderTaskSelectionCard({ projectName: project.name, tasks: taskOptions }),
           [`当前项目：${project.name}`, "任务列表：", ...lines, "", "10 分钟内回复序号切换；发送“新任务 名称”可创建独立任务。"].join("\n")
         );
         return;

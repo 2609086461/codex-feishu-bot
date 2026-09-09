@@ -46,6 +46,8 @@ Only stop for those checkpoints. Do not push routine console clicking back onto 
 - Keep generated user-facing files under `CODEX_ARTIFACTS_DIR` unless the user explicitly asks to write into the repository itself.
 - Never commit `.env.real` or local browser profile data.
 - Prefer `pnpm docker:*` commands for validation and debugging.
+- When deploying this bot from inside its own production container, never run `docker compose up` directly through `nsenter`; that command is killed when Docker replaces the current container. Run `/usr/local/bin/self-deploy` instead. It hands the build, recreation, and health check to a transient host systemd unit that survives replacement of the old container.
+- Before starting an in-container self-deployment, tell the user that the current turn will be interrupted near the end and that the restarted bot will report recovery. Use `/usr/local/bin/self-deploy --dry-run` for a non-mutating prerequisite check.
 
 ## Verification
 

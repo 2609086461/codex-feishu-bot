@@ -879,6 +879,108 @@ test("ChatOrchestrator creates an isolated task and can return to the previous t
   assert.match(replies.at(-1) ?? "", /默认任务/);
 });
 
+test("ChatOrchestrator switches projects and tasks through cards", async () => {
+  const now = new Date().toISOString();
+  const sessionStore = new SessionStore();
+  const runStore = new RunStore();
+  const conversationStore = new ConversationStore();
+  const projector = new MessageProjector(runStore, conversationStore);
+  sessionStore.save({
+    chatId: "oc_group_1",
+    threadId: "thread_a1",
+    workspaceId: "/workspace/a",
+    activeProjectId: "project-a",
+    projects: [
+      {
+        id: "project-a",
+        name: "项目 A",
+        workspaceId: "/workspace/a",
+        activeTaskId: "task-a1",
+        tasks: [{ id: "task-a1", name: "任务 A1", threadId: "thread_a1", createdAt: now, updatedAt: now }],
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: "project-b",
+        name: "项目 B",
+        workspaceId: "/workspace/b",
+        activeTaskId: "task-b1",
+        tasks: [
+          { id: "task-b1", name: "任务 B1", threadId: "thread_b1", createdAt: now, updatedAt: now },
+          { id: "task-b2", name: "任务 B2", threadId: "thread_b2", createdAt: now, updatedAt: now }
+        ],
+        createdAt: now,
+        updatedAt: now
+      }
+    ],
+    updatedAt: now
+  });
+  const sentCards: string[] = [];
+  const updatedCards: string[] = [];
+  const orchestrator = new ChatOrchestrator(
+    sessionStore,
+    runStore,
+    conversationStore,
+    {
+      async sendText() {
+        return "om_text";
+      },
+      async sendCard(_chatId: string, content: string) {
+        sentCards.push(content);
+        return sentCards.length === 1 ? "om_projects" : "om_tasks";
+      },
+      async updateCard(_messageId: string, content: string) {
+        updatedCards.push(content);
+      },
+      schedule() {
+        return undefined;
+      },
+      async flushRun() {
+        return undefined;
+      }
+    } as never,
+    projector,
+    {
+      async ensureThread() {
+        return "thread_unused";
+      },
+      async *runTurn(): AsyncGenerator<CodexEvent> {
+        return;
+      }
+    },
+    "/workspace",
+    createLogger()
+  );
+
+  orchestrator.enqueue(createMessage({ messageId: "om_project_menu", text: "项目" }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.match(sentCards[0] ?? "", /project_select/);
+  assert.equal(orchestrator.enqueueCardAction({
+    chatId: "oc_group_1",
+    messageId: "om_projects",
+    operatorOpenId: "ou_user_1",
+    value: { kind: "project_select", projectId: "project-b" },
+    raw: {}
+  }), true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(sessionStore.get("oc_group_1")?.workspaceId, "/workspace/b");
+
+  orchestrator.enqueue(createMessage({ messageId: "om_task_menu", text: "任务" }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.match(sentCards[1] ?? "", /task_select/);
+  assert.equal(orchestrator.enqueueCardAction({
+    chatId: "oc_group_1",
+    messageId: "om_tasks",
+    operatorOpenId: "ou_user_1",
+    value: { kind: "task_select", taskId: "task-b2" },
+    raw: {}
+  }), true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(sessionStore.get("oc_group_1")?.threadId, "thread_b2");
+  assert.equal(updatedCards.length, 2);
+});
+
 test("ChatOrchestrator starts a pending task in runTurn without precreating a thread", async () => {
   const sessionStore = new SessionStore();
   const runStore = new RunStore();

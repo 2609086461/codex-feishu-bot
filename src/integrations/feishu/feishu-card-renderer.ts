@@ -311,6 +311,11 @@ function actionRows(buttons: Array<Record<string, unknown>>): Array<Record<strin
   return rows;
 }
 
+function compactButtonLabel(value: string): string {
+  const normalized = value.trim();
+  return normalized.length > 28 ? `${normalized.slice(0, 27)}…` : normalized;
+}
+
 export function renderModelSelectionCard(input: {
   currentModel: string;
   models: Array<{ model: string; displayName: string; isDefault: boolean }>;
@@ -372,6 +377,83 @@ export function renderEffortSelectionCard(input: {
         })
       )),
       legacyMarkdown("也可以在 10 分钟内回复原来的序号或档位名称。")
+    ]
+  };
+  return JSON.stringify(card);
+}
+
+export function renderProjectSelectionCard(input: {
+  projects: Array<{
+    id: string;
+    name: string;
+    detail: string;
+    current: boolean;
+  }>;
+}): string {
+  const summary = input.projects.length > 0
+    ? input.projects.map((project) =>
+      `${project.current ? "✅" : "•"} **${project.name}** · ${project.detail}`
+    ).join("\n")
+    : "当前没有可切换的项目。";
+  const card: LegacyInteractiveCard = {
+    config: {
+      wide_screen_mode: true,
+      enable_forward: false,
+      update_multi: true
+    },
+    header: {
+      template: "blue",
+      title: {
+        tag: "plain_text",
+        content: "切换项目"
+      }
+    },
+    elements: [
+      legacyMarkdown(summary),
+      ...actionRows(input.projects.map((project) =>
+        cardButton(
+          compactButtonLabel(`${project.current ? "✓ " : ""}${project.name}`),
+          { kind: "project_select", projectId: project.id },
+          project.current ? "primary" : "default"
+        )
+      )),
+      legacyMarkdown("卡片 10 分钟内有效；也可以回复原来的序号。")
+    ]
+  };
+  return JSON.stringify(card);
+}
+
+export function renderTaskSelectionCard(input: {
+  projectName: string;
+  tasks: Array<{
+    id: string;
+    name: string;
+    current: boolean;
+  }>;
+}): string {
+  const card: LegacyInteractiveCard = {
+    config: {
+      wide_screen_mode: true,
+      enable_forward: false,
+      update_multi: true
+    },
+    header: {
+      template: "wathet",
+      title: {
+        tag: "plain_text",
+        content: "切换任务"
+      }
+    },
+    elements: [
+      legacyMarkdown(`当前项目：**${input.projectName}**`),
+      ...actionRows(input.tasks.map((task) =>
+        cardButton(
+          compactButtonLabel(`${task.current ? "✓ " : ""}${task.name}`),
+          { kind: "task_select", taskId: task.id },
+          task.current ? "primary" : "default"
+        )
+      )),
+      legacyMarkdown("卡片 10 分钟内有效；也可以回复原来的序号。发送“新任务 名称”可创建独立任务。")
     ]
   };
   return JSON.stringify(card);

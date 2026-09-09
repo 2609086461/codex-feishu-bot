@@ -6,7 +6,9 @@ import {
   renderAssistantCardContent,
   renderEffortSelectionCard,
   renderModelSelectionCard,
+  renderProjectSelectionCard,
   renderProgressCardContent,
+  renderTaskSelectionCard,
   renderToolCardContent
 } from "./feishu-card-renderer.js";
 
@@ -194,4 +196,23 @@ test("renderEffortSelectionCard splits six choices into button rows", () => {
   assert.equal(actionRows.length, 2);
   assert.equal(actionRows[0].actions.length, 3);
   assert.equal(actionRows[1].actions.length, 3);
+});
+
+test("project and task selection cards carry stable ids instead of list indexes", () => {
+  const projectCard = JSON.parse(renderProjectSelectionCard({
+    projects: [{ id: "project-1", name: "机器人", detail: "Git main@12345678", current: true }]
+  }));
+  assert.deepEqual(projectCard.elements[1].actions[0].value, {
+    kind: "project_select",
+    projectId: "project-1"
+  });
+
+  const taskCard = JSON.parse(renderTaskSelectionCard({
+    projectName: "机器人",
+    tasks: [{ id: "task-1", name: "卡片交互", current: false }]
+  }));
+  assert.deepEqual(taskCard.elements[1].actions[0].value, {
+    kind: "task_select",
+    taskId: "task-1"
+  });
 });
