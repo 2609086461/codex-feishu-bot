@@ -7,11 +7,17 @@ import type {
   ChatTask,
   CodexModelInfo,
   CodexWorkspaceProject,
+  IncomingCardAction,
   IncomingChatMessage,
   ReasoningEffort
 } from "../domain/types.js";
 import type { CodexWorker } from "../integrations/codex/codex-worker.js";
 import { reasoningEffortsFor } from "../integrations/codex/model-router.js";
+import {
+  renderEffortSelectionCard,
+  renderModelSelectionCard,
+  renderSelectionConfirmedCard
+} from "../integrations/feishu/feishu-card-renderer.js";
 import { ConversationStore } from "../stores/conversation-store.js";
 import { RunStore } from "../stores/run-store.js";
 import { SessionStore } from "../stores/session-store.js";
@@ -41,6 +47,7 @@ interface LoggerLike {
 
 export class ChatOrchestrator {
   private readonly seenIncomingMessages = new Map<string, number>();
+  private readonly seenCardActions = new Map<string, number>();
   private readonly gitProjectService: GitProjectServiceLike;
 
   constructor(
@@ -173,6 +180,252 @@ export class ChatOrchestrator {
     }
 
     void this.handleMessage(message);
+  }
+
+  enqueueCardAction(action: IncomingCardAction): boolean {
+    if (this.isDuplicateCardAction(action)) {
+      return false;
+    }
+
+    const session = this.sessionStore.get(action.chatId);
+    const kind = typeof action.value.kind === "string" ? action.value.kind : "";
+    if (kind === "auto_select") {
+      if (!session || !this.hasFreshModelSelection(session)) {
+        return false;
+      }
+      this.clearPendingModelOptions(action.chatId);
+      void this.applyAutomaticCardSelection(action, session);
+      return true;
+    }
+
+    if (kind === "model_select") {
+      const model = typeof action.value.model === "string" ? action.value.model : "";
+      const selected = session?.pendingModelOptions?.find((option) => option.model === model);
+      if (!session || !selected || !this.hasFreshModelSelection(session)) {
+        return false;
+      }
+      this.clearPendingModelOptions(action.chatId);
+      void this.applyModelCardSelection(action, selected);
+      return true;
+    }
+
+    if (kind === "effort_select") {
+      const effort = normalizeReasoningEffort(
+        typeof action.value.effort === "string" ? action.value.effort : ""
+      );
+      const selected = session?.pendingModelForEffort;
+      if (
+        !session ||
+        !selected ||
+        !effort ||
+        !session.pendingEffortOptions?.includes(effort) ||
+        !this.hasFreshEffortSelection(session)
+      ) {
+        return false;
+      }
+      this.sessionStore.update(action.chatId, {
+        pendingModelForEffort: undefined,
+        pendingEffortOptions: undefined,
+        pendingEffortSelectionAt: undefined
+      });
+      void this.applyManualCardSelection(action, selected, effort, session);
+      return true;
+    }
+
+    return false;
+  }
+
+  private hasFreshModelSelection(session: ChatSession): boolean {
+    const createdAt = session.pendingModelSelectionAt
+      ? Date.parse(session.pendingModelSelectionAt)
+      : Number.NaN;
+    return Boolean(
+      session.pendingModelOptions?.length &&
+        Number.isFinite(createdAt) &&
+        Date.now() - createdAt <= 10 * 60 * 1000
+    );
+  }
+
+  private hasFreshEffortSelection(session: ChatSession): boolean {
+    const createdAt = session.pendingEffortSelectionAt
+      ? Date.parse(session.pendingEffortSelectionAt)
+      : Number.NaN;
+    return Boolean(
+      session.pendingModelForEffort &&
+        session.pendingEffortOptions?.length &&
+        Number.isFinite(createdAt) &&
+        Date.now() - createdAt <= 10 * 60 * 1000
+    );
+  }
+
+  private isDuplicateCardAction(action: IncomingCardAction): boolean {
+    const now = Date.now();
+    for (const [key, seenAt] of this.seenCardActions) {
+      if (now - seenAt > 30 * 60 * 1000) {
+        this.seenCardActions.delete(key);
+      }
+    }
+    const key = [
+      action.messageId ?? action.chatId,
+      action.operatorOpenId,
+      JSON.stringify(action.value)
+    ].join(":");
+    if (this.seenCardActions.has(key)) {
+      return true;
+    }
+    this.seenCardActions.set(key, now);
+    return false;
+  }
+
+  private async applyAutomaticCardSelection(
+    action: IncomingCardAction,
+    session: ChatSession
+  ): Promise<void> {
+    try {
+      this.sessionStore.update(action.chatId, {
+        routingMode: "auto",
+        pendingModelOptions: undefined,
+        pendingModelSelectionAt: undefined,
+        pendingModelForEffort: undefined,
+        pendingEffortOptions: undefined,
+        pendingEffortSelectionAt: undefined
+      });
+      const suffix = session.activeRunId ? "，从下一个任务开始生效" : "";
+      await this.updateCardOrSendText(
+        action,
+        renderSelectionConfirmedCard(
+          "已开启自动模式",
+          `以后每条新任务先由快模型判断，再自动选择模型和思考深度${suffix}。`
+        ),
+        `已开启自动模式${suffix}。`
+      );
+    } catch (error) {
+      await this.reportCardActionFailure(action, error);
+    }
+  }
+
+  private async applyModelCardSelection(
+    action: IncomingCardAction,
+    selectedOption: { model: string; displayName: string }
+  ): Promise<void> {
+    try {
+      const models = (await this.codexWorker.listModels?.())?.filter((model) => !model.hidden) ?? [];
+      const selected = models.find((model) => model.model === selectedOption.model);
+      if (!selected) {
+        await this.deliveryService.sendText(
+          action.chatId,
+          "可用模型列表已经变化，请重新发送“模型”。"
+        );
+        return;
+      }
+      if (action.messageId) {
+        await this.tryUpdateCard(
+          action.messageId,
+          renderSelectionConfirmedCard("模型已选择", `已选择：**${selected.displayName}**`)
+        );
+      }
+      await this.beginManualModelSelection(action.chatId, selected, true);
+    } catch (error) {
+      await this.reportCardActionFailure(action, error);
+    }
+  }
+
+  private async applyManualCardSelection(
+    action: IncomingCardAction,
+    selected: { model: string; displayName: string },
+    effort: ReasoningEffort,
+    session: ChatSession
+  ): Promise<void> {
+    try {
+      this.sessionStore.update(action.chatId, {
+        routingMode: "manual",
+        model: selected.model,
+        modelDisplayName: selected.displayName,
+        reasoningEffort: effort,
+        pendingModelForEffort: undefined,
+        pendingEffortOptions: undefined,
+        pendingEffortSelectionAt: undefined
+      });
+      const suffix = session.activeRunId ? "，从下一个任务开始生效" : "";
+      const summary = `${selected.displayName} + ${formatReasoningEffort(effort)}${suffix}`;
+      await this.updateCardOrSendText(
+        action,
+        renderSelectionConfirmedCard("切换完成", `手动模式：**${summary}**`),
+        `已切换为手动模式：${summary}。`
+      );
+    } catch (error) {
+      await this.reportCardActionFailure(action, error);
+    }
+  }
+
+  private async sendCardOrText(
+    chatId: string,
+    cardContent: string,
+    fallbackText: string
+  ): Promise<string> {
+    const delivery = this.deliveryService as ConversationDeliveryService & {
+      sendCard?: (chatId: string, content: string) => Promise<string>;
+    };
+    if (typeof delivery.sendCard === "function") {
+      try {
+        return await delivery.sendCard(chatId, cardContent);
+      } catch (error) {
+        this.logger.warn(
+          {
+            chatId,
+            error: error instanceof Error ? error.message : String(error)
+          },
+          "发送交互卡片失败，降级为文本菜单"
+        );
+      }
+    }
+    return this.deliveryService.sendText(chatId, fallbackText);
+  }
+
+  private async tryUpdateCard(messageId: string, content: string): Promise<boolean> {
+    const delivery = this.deliveryService as ConversationDeliveryService & {
+      updateCard?: (messageId: string, content: string) => Promise<void>;
+    };
+    if (typeof delivery.updateCard !== "function") {
+      return false;
+    }
+    try {
+      await delivery.updateCard(messageId, content);
+      return true;
+    } catch (error) {
+      this.logger.warn(
+        {
+          messageId,
+          error: error instanceof Error ? error.message : String(error)
+        },
+        "更新交互卡片失败"
+      );
+      return false;
+    }
+  }
+
+  private async updateCardOrSendText(
+    action: IncomingCardAction,
+    cardContent: string,
+    fallbackText: string
+  ): Promise<void> {
+    if (action.messageId && await this.tryUpdateCard(action.messageId, cardContent)) {
+      return;
+    }
+    await this.deliveryService.sendText(action.chatId, fallbackText);
+  }
+
+  private async reportCardActionFailure(action: IncomingCardAction, error: unknown): Promise<void> {
+    const errorText = error instanceof Error ? error.message : String(error);
+    this.logger.error(
+      {
+        chatId: action.chatId,
+        messageId: action.messageId,
+        error: errorText
+      },
+      "处理飞书卡片操作失败"
+    );
+    await this.deliveryService.sendText(action.chatId, `切换失败：${errorText}`);
   }
 
   private async handleMessage(message: IncomingChatMessage): Promise<void> {
@@ -528,17 +781,19 @@ export class ChatOrchestrator {
           return `${index + 1}. ${model.displayName}${defaultLabel}`;
         });
         this.rememberModelOptions(message.chatId, models);
-        await this.deliveryService.sendText(
+        const fallbackText = [
+          `当前模式：${currentModel}`,
+          "",
+          "0. 自动选择模型和思考强度",
+          "手动模型：",
+          ...lines,
+          "",
+          "10 分钟内回复序号或模型名称。选择手动模型后，我会再让你选择思考强度。"
+        ].join("\n");
+        await this.sendCardOrText(
           message.chatId,
-          [
-            `当前模式：${currentModel}`,
-            "",
-            "0. 自动选择模型和思考强度",
-            "手动模型：",
-            ...lines,
-            "",
-            "10 分钟内回复序号或模型名称。选择手动模型后，我会再让你选择思考强度。"
-          ].join("\n")
+          renderModelSelectionCard({ currentModel, models }),
+          fallbackText
         );
         return;
       }
@@ -666,7 +921,8 @@ export class ChatOrchestrator {
 
   private async beginManualModelSelection(
     chatId: string,
-    selected: CodexModelInfo
+    selected: CodexModelInfo,
+    preferCard = false
   ): Promise<void> {
     const effortOptions = reasoningEffortsFor(selected);
     this.sessionStore.update(chatId, {
@@ -680,17 +936,29 @@ export class ChatOrchestrator {
       pendingEffortSelectionAt: new Date().toISOString(),
       pendingNavigation: undefined
     });
-    await this.deliveryService.sendText(
-      chatId,
-      [
-        `已选择模型：${selected.displayName}`,
-        "",
-        "请选择思考强度：",
-        ...effortOptions.map((effort, index) => `${index + 1}. ${formatReasoningEffort(effort)}`),
-        "",
-        "10 分钟内回复序号或档位名称；完成后才会切换为手动模式。"
-      ].join("\n")
-    );
+    const fallbackText = [
+      `已选择模型：${selected.displayName}`,
+      "",
+      "请选择思考强度：",
+      ...effortOptions.map((effort, index) => `${index + 1}. ${formatReasoningEffort(effort)}`),
+      "",
+      "10 分钟内回复序号或档位名称；完成后才会切换为手动模式。"
+    ].join("\n");
+    if (preferCard) {
+      await this.sendCardOrText(
+        chatId,
+        renderEffortSelectionCard({
+          model: selected.displayName,
+          efforts: effortOptions.map((effort) => ({
+            value: effort,
+            label: formatReasoningEffort(effort)
+          }))
+        }),
+        fallbackText
+      );
+      return;
+    }
+    await this.deliveryService.sendText(chatId, fallbackText);
   }
 
   private async applyManualSelection(

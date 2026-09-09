@@ -13,6 +13,15 @@ export interface IncomingChatMessage {
   raw: unknown;
 }
 
+export interface IncomingCardAction {
+  chatId: string;
+  messageId?: string;
+  operatorOpenId: string;
+  actionToken?: string;
+  value: Record<string, unknown>;
+  raw: unknown;
+}
+
 export interface IncomingChatAttachment {
   kind: "image";
   key: string;

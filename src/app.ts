@@ -22,6 +22,7 @@ import { ConsoleFeishuMessageClient } from "./integrations/feishu/feishu-message
 import type { FeishuMessageClient } from "./integrations/feishu/feishu-message-client.js";
 import { FeishuSdkMessageClient } from "./integrations/feishu/feishu-sdk-message-client.js";
 import { FeishuWsSubscriber } from "./integrations/feishu/feishu-ws-subscriber.js";
+import type { IncomingCardAction } from "./domain/types.js";
 import { registerDebugRoutes } from "./routes/debug.js";
 import { registerFeishuRoutes } from "./routes/feishu.js";
 import { registerHealthRoutes } from "./routes/health.js";
@@ -128,6 +129,19 @@ export function buildAppRuntime(env: Env): AppRuntime {
     }
     orchestrator.enqueue(message);
   };
+  const enqueueAuthorizedCardAction = (action: IncomingCardAction): boolean => {
+    if (!accessPolicy.allowedOpenIds.has(action.operatorOpenId)) {
+      app.log.warn(
+        {
+          chatId: action.chatId,
+          operatorOpenId: action.operatorOpenId
+        },
+        "忽略未授权的飞书卡片操作"
+      );
+      return false;
+    }
+    return orchestrator.enqueueCardAction(action);
+  };
 
   void registerHealthRoutes(app);
   void registerDebugRoutes(app, {
@@ -150,7 +164,8 @@ export function buildAppRuntime(env: Env): AppRuntime {
           ? new FeishuWsSubscriber({
               env,
               logger: app.log,
-              onMessage: enqueueAuthorizedMessage
+              onMessage: enqueueAuthorizedMessage,
+              onCardAction: enqueueAuthorizedCardAction
             })
           : undefined;
 

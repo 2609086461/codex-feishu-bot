@@ -52,6 +52,20 @@ export class ConversationDeliveryService {
     });
   }
 
+  async sendCard(chatId: string, content: string): Promise<string> {
+    return this.feishuClient.sendCard({
+      chatId,
+      content
+    });
+  }
+
+  async updateCard(messageId: string, content: string): Promise<void> {
+    await this.feishuClient.updateCard({
+      messageId,
+      content
+    });
+  }
+
   async flush(runId: string, itemId: string): Promise<void> {
     const key = this.makeKey(runId, itemId);
     const timer = this.timers.get(key);

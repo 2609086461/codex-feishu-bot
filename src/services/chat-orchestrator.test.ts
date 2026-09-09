@@ -543,6 +543,110 @@ test("ChatOrchestrator switches to a model by replying with its menu number", as
   assert.equal(sessionStore.get("oc_group_1")?.pendingModelOptions, undefined);
 });
 
+test("ChatOrchestrator switches model and effort through two card clicks", async () => {
+  const sessionStore = new SessionStore();
+  const runStore = new RunStore();
+  const conversationStore = new ConversationStore();
+  const projector = new MessageProjector(runStore, conversationStore);
+  const sentCards: string[] = [];
+  const updatedCards: string[] = [];
+  let resolveEffortCard: (() => void) | undefined;
+  const effortCardSent = new Promise<void>((resolve) => {
+    resolveEffortCard = resolve;
+  });
+  let resolveCompleted: (() => void) | undefined;
+  const completed = new Promise<void>((resolve) => {
+    resolveCompleted = resolve;
+  });
+
+  const orchestrator = new ChatOrchestrator(
+    sessionStore,
+    runStore,
+    conversationStore,
+    {
+      async sendText() {
+        return "om_text";
+      },
+      async sendCard(_chatId: string, content: string) {
+        sentCards.push(content);
+        if (sentCards.length === 2) {
+          resolveEffortCard?.();
+        }
+        return sentCards.length === 1 ? "om_model_card" : "om_effort_card";
+      },
+      async updateCard(_messageId: string, content: string) {
+        updatedCards.push(content);
+        if (updatedCards.length === 2) {
+          resolveCompleted?.();
+        }
+      },
+      schedule() {
+        return undefined;
+      },
+      async flushRun() {
+        return undefined;
+      }
+    } as never,
+    projector,
+    {
+      async listModels() {
+        return [{
+          id: "gpt-5.6-sol",
+          model: "gpt-5.6-sol",
+          displayName: "GPT-5.6-Sol",
+          description: "balanced",
+          hidden: false,
+          isDefault: true,
+          supportedReasoningEfforts: ["low", "medium", "high"]
+        }];
+      },
+      async ensureThread() {
+        return "thread_existing";
+      },
+      async *runTurn(): AsyncGenerator<CodexEvent> {
+        return;
+      }
+    },
+    "/workspace",
+    createLogger()
+  );
+
+  orchestrator.enqueue(createMessage({ messageId: "om_open_menu", text: "模型" }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.match(sentCards[0] ?? "", /model_select/);
+
+  assert.equal(orchestrator.enqueueCardAction({
+    chatId: "oc_group_1",
+    messageId: "om_model_card",
+    operatorOpenId: "ou_user_1",
+    value: { kind: "model_select", model: "gpt-5.6-sol" },
+    raw: {}
+  }), true);
+  await effortCardSent;
+  assert.match(sentCards[1] ?? "", /effort_select/);
+
+  assert.equal(orchestrator.enqueueCardAction({
+    chatId: "oc_group_1",
+    messageId: "om_effort_card",
+    operatorOpenId: "ou_user_1",
+    value: { kind: "effort_select", effort: "high" },
+    raw: {}
+  }), true);
+  await completed;
+
+  const session = sessionStore.get("oc_group_1");
+  assert.equal(session?.routingMode, "manual");
+  assert.equal(session?.model, "gpt-5.6-sol");
+  assert.equal(session?.reasoningEffort, "high");
+  assert.equal(orchestrator.enqueueCardAction({
+    chatId: "oc_group_1",
+    messageId: "om_effort_card",
+    operatorOpenId: "ou_user_1",
+    value: { kind: "effort_select", effort: "high" },
+    raw: {}
+  }), false);
+});
+
 test("ChatOrchestrator uses an automatic route for a new turn", async () => {
   const sessionStore = new SessionStore();
   const runStore = new RunStore();

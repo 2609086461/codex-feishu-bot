@@ -1,7 +1,7 @@
 import * as Lark from "@larksuiteoapi/node-sdk";
 
 import type { Env } from "../../config/env.js";
-import type { IncomingChatMessage } from "../../domain/types.js";
+import type { IncomingCardAction, IncomingChatMessage } from "../../domain/types.js";
 import { dirname, join } from "node:path";
 
 import { FeishuInboundResourceDownloader } from "./feishu-inbound-resource.js";
@@ -10,6 +10,7 @@ import {
   parseFeishuMessageEventResult,
   summarizeFeishuPayload
 } from "./parse-feishu-message.js";
+import { parseFeishuCardAction } from "./parse-feishu-card-action.js";
 
 interface LoggerLike {
   info(message: unknown, ...args: unknown[]): void;
@@ -20,6 +21,7 @@ interface LoggerLike {
 interface FeishuWsSubscriberParams {
   env: Env;
   onMessage: (message: IncomingChatMessage) => void;
+  onCardAction?: (action: IncomingCardAction) => boolean;
   logger: LoggerLike;
 }
 
@@ -79,6 +81,42 @@ export class FeishuWsSubscriber {
           "收到飞书消息事件"
         );
         this.params.onMessage(message);
+      },
+      "card.action.trigger": async (data: unknown) => {
+        const parsed = parseFeishuCardAction(data);
+        if (!parsed.ok) {
+          this.params.logger.warn(
+            {
+              reason: parsed.reason,
+              payloadShape: summarizeFeishuPayload(data)
+            },
+            "忽略无法解析的飞书卡片事件"
+          );
+          return {
+            toast: {
+              type: "warning",
+              content: "未能识别这次操作，请重新发送“模型”。"
+            }
+          };
+        }
+
+        const accepted = this.params.onCardAction?.(parsed.action) ?? false;
+        this.params.logger.info(
+          {
+            chatId: parsed.action.chatId,
+            messageId: parsed.action.messageId,
+            operatorOpenId: parsed.action.operatorOpenId,
+            actionKind: parsed.action.value.kind,
+            accepted
+          },
+          "收到飞书卡片操作"
+        );
+        return {
+          toast: {
+            type: accepted ? "success" : "warning",
+            content: accepted ? "已收到，正在切换。" : "操作已过期或无权限，请重新发送“模型”。"
+          }
+        };
       }
     });
   }

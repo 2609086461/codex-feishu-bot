@@ -4,6 +4,8 @@ import test from "node:test";
 import type { ConversationItem } from "../../domain/types.js";
 import {
   renderAssistantCardContent,
+  renderEffortSelectionCard,
+  renderModelSelectionCard,
   renderProgressCardContent,
   renderToolCardContent
 } from "./feishu-card-renderer.js";
@@ -159,4 +161,37 @@ test("renderProgressCardContent renders a compact shared status card", () => {
   assert.match(payload.body.elements[0].content, /\[x\] 检查代码/);
   assert.match(payload.body.elements[0].content, /执行命令.*pnpm test/);
   assert.match(payload.body.elements[0].content, /修改文件.*app\.ts/);
+});
+
+test("renderModelSelectionCard renders clickable automatic and model buttons", () => {
+  const payload = JSON.parse(renderModelSelectionCard({
+    currentModel: "自动",
+    models: [
+      { model: "gpt-5.6-luna", displayName: "GPT-5.6-Luna", isDefault: false },
+      { model: "gpt-5.6-sol", displayName: "GPT-5.6-Sol", isDefault: true }
+    ]
+  }));
+
+  assert.equal(payload.header.title.content, "选择 Codex 模型");
+  assert.equal(payload.elements[1].tag, "action");
+  assert.deepEqual(payload.elements[1].actions[0].value, { kind: "auto_select" });
+  assert.deepEqual(payload.elements[1].actions[2].value, {
+    kind: "model_select",
+    model: "gpt-5.6-sol"
+  });
+});
+
+test("renderEffortSelectionCard splits six choices into button rows", () => {
+  const payload = JSON.parse(renderEffortSelectionCard({
+    model: "GPT-5.6-Sol",
+    efforts: ["low", "medium", "high", "xhigh", "max", "ultra"].map((value) => ({
+      value,
+      label: value
+    }))
+  }));
+
+  const actionRows = payload.elements.filter((element: { tag: string }) => element.tag === "action");
+  assert.equal(actionRows.length, 2);
+  assert.equal(actionRows[0].actions.length, 3);
+  assert.equal(actionRows[1].actions.length, 3);
 });

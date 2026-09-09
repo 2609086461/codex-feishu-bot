@@ -2,6 +2,22 @@ import { basename } from "node:path";
 
 import type { ConversationItem } from "../../domain/types.js";
 
+interface LegacyInteractiveCard {
+  config: {
+    wide_screen_mode: boolean;
+    enable_forward: boolean;
+    update_multi: boolean;
+  };
+  header: {
+    template: "blue" | "green" | "orange" | "red" | "wathet" | "grey";
+    title: {
+      tag: "plain_text";
+      content: string;
+    };
+  };
+  elements: Array<Record<string, unknown>>;
+}
+
 interface InteractiveCard {
   schema: "2.0";
   config: {
@@ -256,6 +272,128 @@ export function renderFileMessageContent(fileKey: string): string {
   return JSON.stringify({
     file_key: fileKey
   });
+}
+
+function legacyMarkdown(content: string): Record<string, unknown> {
+  return {
+    tag: "div",
+    text: {
+      tag: "lark_md",
+      content
+    }
+  };
+}
+
+function cardButton(
+  label: string,
+  value: Record<string, string>,
+  type: "default" | "primary" = "default"
+): Record<string, unknown> {
+  return {
+    tag: "button",
+    text: {
+      tag: "plain_text",
+      content: label
+    },
+    type,
+    value
+  };
+}
+
+function actionRows(buttons: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const rows: Array<Record<string, unknown>> = [];
+  for (let index = 0; index < buttons.length; index += 3) {
+    rows.push({
+      tag: "action",
+      actions: buttons.slice(index, index + 3)
+    });
+  }
+  return rows;
+}
+
+export function renderModelSelectionCard(input: {
+  currentModel: string;
+  models: Array<{ model: string; displayName: string; isDefault: boolean }>;
+}): string {
+  const buttons = [
+    cardButton("自动选择", { kind: "auto_select" }, "primary"),
+    ...input.models.map((model) =>
+      cardButton(
+        `${model.displayName}${model.isDefault ? "（推荐）" : ""}`,
+        { kind: "model_select", model: model.model }
+      )
+    )
+  ];
+  const card: LegacyInteractiveCard = {
+    config: {
+      wide_screen_mode: true,
+      enable_forward: false,
+      update_multi: true
+    },
+    header: {
+      template: "blue",
+      title: {
+        tag: "plain_text",
+        content: "选择 Codex 模型"
+      }
+    },
+    elements: [
+      legacyMarkdown(`当前模式：**${input.currentModel}**\n\n请选择自动模式或手动模型。`),
+      ...actionRows(buttons),
+      legacyMarkdown("也可以在 10 分钟内回复原来的序号。")
+    ]
+  };
+  return JSON.stringify(card);
+}
+
+export function renderEffortSelectionCard(input: {
+  model: string;
+  efforts: Array<{ value: string; label: string }>;
+}): string {
+  const card: LegacyInteractiveCard = {
+    config: {
+      wide_screen_mode: true,
+      enable_forward: false,
+      update_multi: true
+    },
+    header: {
+      template: "wathet",
+      title: {
+        tag: "plain_text",
+        content: "选择思考深度"
+      }
+    },
+    elements: [
+      legacyMarkdown(`已选择模型：**${input.model}**\n\n请选择思考深度，完成后切换生效。`),
+      ...actionRows(input.efforts.map((effort) =>
+        cardButton(effort.label, {
+          kind: "effort_select",
+          effort: effort.value
+        })
+      )),
+      legacyMarkdown("也可以在 10 分钟内回复原来的序号或档位名称。")
+    ]
+  };
+  return JSON.stringify(card);
+}
+
+export function renderSelectionConfirmedCard(title: string, content: string): string {
+  const card: LegacyInteractiveCard = {
+    config: {
+      wide_screen_mode: true,
+      enable_forward: false,
+      update_multi: true
+    },
+    header: {
+      template: "green",
+      title: {
+        tag: "plain_text",
+        content: title
+      }
+    },
+    elements: [legacyMarkdown(content)]
+  };
+  return JSON.stringify(card);
 }
 
 export function renderAssistantCardContent(item: ConversationItem): string {
