@@ -16,6 +16,7 @@ import { AppServerWsConnection } from "./app-server-ws-connection.js";
 import type { CodexTurnContext, CodexWorker } from "./codex-worker.js";
 import {
   buildRouterPrompt,
+  isAutoRouteEligible,
   normalizeRouteDecision,
   pickRouterModel
 } from "./model-router.js";
@@ -328,7 +329,7 @@ export class CodexAppServerWorker implements CodexWorker {
   }
 
   async routeTurn(context: CodexTurnContext): Promise<CodexRouteDecision> {
-    const models = (await this.listModels()).filter((model) => !model.hidden);
+    const models = (await this.listModels()).filter(isAutoRouteEligible);
     const routerModel = pickRouterModel(models);
     const fallback = normalizeRouteDecision({}, models);
     if (!routerModel) {

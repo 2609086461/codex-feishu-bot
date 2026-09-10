@@ -15,6 +15,12 @@ export const ALL_REASONING_EFFORTS: ReasoningEffort[] = [
 
 const AUTO_ROUTE_CONFIDENCE_THRESHOLD = 0.65;
 
+// The owner can still choose every visible model manually. Automatic routing
+// deliberately avoids the highest-cost GPT-6/Astra family.
+export function isAutoRouteEligible(model: CodexModelInfo): boolean {
+  return !model.hidden && !/gpt[ -]?6|astra/i.test(`${model.model} ${model.displayName}`);
+}
+
 function isReasoningEffort(value: unknown): value is ReasoningEffort {
   return typeof value === "string" && ALL_REASONING_EFFORTS.includes(value as ReasoningEffort);
 }
@@ -29,7 +35,7 @@ export function reasoningEffortsFor(model: CodexModelInfo): ReasoningEffort[] {
 }
 
 export function pickRouterModel(models: CodexModelInfo[]): CodexModelInfo | undefined {
-  const visible = models.filter((model) => !model.hidden);
+  const visible = models.filter(isAutoRouteEligible);
   return visible.find((model) => /luna/i.test(model.model)) ??
     visible.find((model) => /mini|fast|nano/i.test(`${model.model} ${model.displayName}`)) ??
     visible.find((model) => model.isDefault) ??
@@ -37,7 +43,7 @@ export function pickRouterModel(models: CodexModelInfo[]): CodexModelInfo | unde
 }
 
 export function pickBalancedFallback(models: CodexModelInfo[]): CodexModelInfo | undefined {
-  const visible = models.filter((model) => !model.hidden);
+  const visible = models.filter(isAutoRouteEligible);
   return visible.find((model) => /sol/i.test(model.model)) ??
     visible.find((model) => /terra/i.test(model.model)) ??
     visible.find((model) => model.isDefault) ??
@@ -95,7 +101,7 @@ export function buildRouterPrompt(
   models: CodexModelInfo[]
 ): string {
   const candidates = models
-    .filter((model) => !model.hidden)
+    .filter(isAutoRouteEligible)
     .map((model) => `${model.model}[${reasoningEffortsFor(model).join("/")}]`)
     .join(",");
 

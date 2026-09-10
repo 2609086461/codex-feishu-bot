@@ -48,10 +48,11 @@ COPY package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY scripts/start-codex-app-server.sh /usr/local/bin/start-codex-app-server
+COPY scripts/configure-xiaohongshu-mcp.sh /usr/local/bin/configure-xiaohongshu-mcp
 COPY scripts/codex-host-exec.sh /usr/local/bin/codex-host-exec
 COPY scripts/self-deploy.sh /usr/local/bin/self-deploy
 COPY scripts/feishu-bridge.mjs /opt/codex-tools/feishu-bridge.mjs
 
-RUN chmod +x /usr/local/bin/start-codex-app-server /usr/local/bin/codex-host-exec /usr/local/bin/self-deploy
+RUN chmod +x /usr/local/bin/start-codex-app-server /usr/local/bin/configure-xiaohongshu-mcp /usr/local/bin/codex-host-exec /usr/local/bin/self-deploy
 
 CMD ["node", "dist/index.js"]

@@ -27,7 +27,7 @@ services:
       CODEX_APP_SERVER_ARGS: app-server
       CODEX_APP_SERVER_MANAGED: "true"
       CODEX_APP_SERVER_LISTEN_URL: ws://127.0.0.1:4500
-      CODEX_APP_SERVER_MODEL: ${CODEX_APP_SERVER_MODEL:-gpt-5.4}
+      CODEX_APP_SERVER_MODEL: ${CODEX_APP_SERVER_MODEL:-gpt-5.6-sol}
       CODEX_APP_SERVER_APPROVAL_POLICY: never
       CODEX_APP_SERVER_SANDBOX: danger-full-access
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -44,6 +44,11 @@ services:
       FEISHU_ALLOW_GROUP_MESSAGES: ${FEISHU_ALLOW_GROUP_MESSAGES:-false}
       QQ_MAIL_ADDRESS: ${QQ_MAIL_ADDRESS:-2609086461@qq.com}
       QQ_MAIL_AUTH_CODE_FILE: ${QQ_MAIL_AUTH_CODE_FILE:-/run/secrets/codex-mail/qq-imap-auth-code}
+      # Optional, read-only Xiaohongshu MCP.  Keep it disabled until the
+      # separate service and its private Docker network have been installed.
+      XHS_MCP_ENABLED: ${XHS_MCP_ENABLED:-false}
+      XHS_MCP_URL: ${XHS_MCP_URL:-http://xiaohongshu-mcp:18060/mcp}
+      XHS_MCP_AUTH_TOKEN: ${XHS_MCP_AUTH_TOKEN:-}
     ports:
       - "127.0.0.1:${APP_PORT:-3000}:3000"
     volumes:
@@ -52,6 +57,9 @@ services:
       - ${GIT_SSH_HOST_PATH:-./.codex-local/ssh}:/root/.ssh:ro
       - ${MAIL_SECRETS_HOST_PATH:-./.codex-local/mail}:/run/secrets/codex-mail:ro
       - /:/host:rw
+    networks:
+      - default
+      - xhs_mcp
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
       interval: 5s
@@ -60,3 +68,11 @@ services:
 
 volumes:
   codex-home:
+
+networks:
+  # Created by deploy/xiaohongshu-mcp/install-host.sh before the bot is
+  # recreated. It has no published host port; only the bot and the MCP
+  # container are attached to it.
+  xhs_mcp:
+    external: true
+    name: ${XHS_MCP_NETWORK:-codex-feishu-xhs}

@@ -1,0 +1,27 @@
+services:
+  xiaohongshu-mcp:
+    # This is an independently maintained third-party image. Do not add
+    # --pull always to routine bot deployments; upgrade it deliberately.
+    image: ${XHS_MCP_IMAGE:-xpzouying/xiaohongshu-mcp:latest}
+    restart: unless-stopped
+    init: true
+    shm_size: 512mb
+    mem_limit: 1g
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      AUTH_TOKEN: ${XHS_MCP_AUTH_TOKEN:?set XHS_MCP_AUTH_TOKEN in the private bot env file}
+      COOKIES_PATH: /app/data/cookies.json
+    volumes:
+      - ${XHS_MCP_DATA_DIR:-/var/lib/codex-feishu/xiaohongshu-mcp/data}:/app/data
+      - ${XHS_MCP_IMAGES_DIR:-/var/lib/codex-feishu/xiaohongshu-mcp/images}:/app/images
+    networks:
+      xhs_mcp:
+        aliases:
+          - xiaohongshu-mcp
+
+networks:
+  xhs_mcp:
+    external: true
+    name: ${XHS_MCP_NETWORK:-codex-feishu-xhs}

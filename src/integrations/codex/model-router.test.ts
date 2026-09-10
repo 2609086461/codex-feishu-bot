@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { CodexModelInfo } from "../../domain/types.js";
 import {
+  buildRouterPrompt,
   normalizeRouteDecision,
   pickRouterModel,
   reasoningEffortsFor
@@ -37,6 +38,23 @@ const models: CodexModelInfo[] = [
 
 test("pickRouterModel prefers the fast Luna model", () => {
   assert.equal(pickRouterModel(models)?.model, "gpt-5.6-luna");
+});
+
+test("automatic routing excludes the GPT-6/Astra family", () => {
+  const withAstra: CodexModelInfo[] = [
+    {
+      id: "gpt-6-astra",
+      model: "gpt-6-astra",
+      displayName: "GPT-6-Astra",
+      description: "expensive",
+      hidden: false,
+      isDefault: true
+    },
+    models[1]!
+  ];
+
+  assert.equal(pickRouterModel(withAstra)?.model, "gpt-5.6-sol");
+  assert.doesNotMatch(buildRouterPrompt("帮我写代码", "", [], withAstra), /gpt-6-astra/i);
 });
 
 test("reasoningEffortsFor supports app-server object entries", () => {

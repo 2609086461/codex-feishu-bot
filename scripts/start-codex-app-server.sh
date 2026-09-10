@@ -6,6 +6,10 @@ LISTEN_URL="${CODEX_APP_SERVER_LISTEN_URL:-ws://0.0.0.0:4500}"
 
 mkdir -p "${CODEX_HOME_DIR}"
 
+# This only writes the MCP endpoint and an environment-variable reference to
+# Codex config. The bearer token itself remains in the private runtime env.
+/usr/local/bin/configure-xiaohongshu-mcp
+
 if [ ! -f "${CODEX_HOME_DIR}/auth.json" ]; then
   if [ -n "${OPENAI_API_KEY:-}" ]; then
     printf '%s' "${OPENAI_API_KEY}" | codex login --with-api-key
