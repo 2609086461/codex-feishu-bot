@@ -10,6 +10,7 @@ ENV_FILE="/etc/codex-feishu/.env.real"
 XHS_COMPOSE="$ROOT/deploy/xiaohongshu-mcp/docker-compose.yml"
 BOT_PROJECT="codex-feishu-bot-real"
 XHS_PROJECT="codex-feishu-xhs"
+PROJECT_RENAME_CHAT_ID="oc_9c50d821a5fe918c65692a4ea54fc65c"
 ORIGINAL_COMMAND="${SSH_ORIGINAL_COMMAND:-}"
 
 need_root() {
@@ -36,6 +37,87 @@ xhs_read_api() {
   curl --fail --silent --show-error --max-time 75 \
     -H "Authorization: Bearer $token" \
     "http://$ip:18060$endpoint"
+}
+
+rename_project() {
+  local old_b64="$1" new_b64="$2" old_name new_name container_id workspace state_file
+  old_name="$(printf '%s' "$old_b64" | base64 --decode 2>/dev/null)" || {
+    echo "invalid old project name" >&2
+    exit 2
+  }
+  new_name="$(printf '%s' "$new_b64" | base64 --decode 2>/dev/null)" || {
+    echo "invalid new project name" >&2
+    exit 2
+  }
+
+  container_id="$(docker compose --env-file "$ENV_FILE" -p "$BOT_PROJECT" ps -q app)"
+  [[ -n "$container_id" ]] || { echo "bot container is not running" >&2; exit 1; }
+  workspace="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}{{end}}{{end}}' "$container_id")"
+  [[ -n "$workspace" ]] || { echo "bot workspace mount is unavailable" >&2; exit 1; }
+  state_file="$workspace/.codex-feishu-bot/runtime-state.json"
+  [[ -f "$state_file" ]] || { echo "runtime state file is unavailable" >&2; exit 1; }
+
+  # The app keeps this state in memory, so stop it before atomically changing
+  # the snapshot and immediately recreate it afterwards. No snapshot content is
+  # printed by this controller command.
+  docker compose --env-file "$ENV_FILE" -p "$BOT_PROJECT" stop app >/dev/null
+  local restart_required=1
+  restart_bot() {
+    if [[ "$restart_required" -eq 1 ]]; then
+      docker compose --env-file "$ENV_FILE" -p "$BOT_PROJECT" up -d app >/dev/null
+    fi
+  }
+  trap restart_bot EXIT
+
+  python3 - "$state_file" "$PROJECT_RENAME_CHAT_ID" "$old_name" "$new_name" <<'PY'
+import json
+import os
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+state_path, chat_id, old_name, new_name = sys.argv[1:]
+for value, label in ((old_name, "old"), (new_name, "new")):
+    if not value or len(value) > 40 or "\n" in value or "\r" in value or "\0" in value:
+        raise SystemExit(f"invalid {label} project name")
+
+with open(state_path, "r", encoding="utf-8") as source:
+    snapshot = json.load(source)
+sessions = snapshot.get("sessions")
+if not isinstance(sessions, list):
+    raise SystemExit("runtime state has no sessions")
+session = next((item for item in sessions if isinstance(item, dict) and item.get("chatId") == chat_id), None)
+if not session:
+    raise SystemExit("target chat session was not found")
+projects = session.get("projects")
+if not isinstance(projects, list):
+    raise SystemExit("target chat has no projects")
+target = next((item for item in projects if isinstance(item, dict) and item.get("name") == old_name), None)
+if not target:
+    raise SystemExit("source project was not found")
+if any(isinstance(item, dict) and item is not target and item.get("name") == new_name for item in projects):
+    raise SystemExit("a project with the new name already exists")
+now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+target["name"] = new_name
+target["updatedAt"] = now
+snapshot["savedAt"] = now
+directory = os.path.dirname(state_path)
+fd, temporary_path = tempfile.mkstemp(prefix=".runtime-state.", dir=directory, text=True)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as destination:
+        json.dump(snapshot, destination, ensure_ascii=False, separators=(",", ":"))
+        destination.write("\n")
+        destination.flush()
+        os.fsync(destination.fileno())
+    os.replace(temporary_path, state_path)
+finally:
+    if os.path.exists(temporary_path):
+        os.unlink(temporary_path)
+PY
+  restart_bot
+  restart_required=0
+  trap - EXIT
+  echo "project renamed and bot restarted"
 }
 
 case "$ORIGINAL_COMMAND" in
@@ -75,8 +157,16 @@ case "$ORIGINAL_COMMAND" in
     [[ "$unit" =~ ^codex-feishu-bot-deploy-[0-9]{14}$ ]] || { echo "invalid deployment unit" >&2; exit 2; }
     systemctl status --no-pager "$unit"
     ;;
+  bot-rename-project\ *)
+    read -r command old_b64 new_b64 extra <<< "$ORIGINAL_COMMAND"
+    [[ "$command" == "bot-rename-project" && -n "${old_b64:-}" && -n "${new_b64:-}" && -z "${extra:-}" ]] || {
+      echo "usage: bot-rename-project <old-name-base64> <new-name-base64>" >&2
+      exit 2
+    }
+    rename_project "$old_b64" "$new_b64"
+    ;;
   *)
-    echo "Allowed: bot-status, bot-diff, bot-logs, bot-xhs-logs, bot-xhs-status, bot-xhs-qrcode, bot-deploy-start, bot-deploy-status <unit>" >&2
+    echo "Allowed: bot-status, bot-diff, bot-logs, bot-xhs-logs, bot-xhs-status, bot-xhs-qrcode, bot-deploy-start, bot-deploy-status <unit>, bot-rename-project <old-name-base64> <new-name-base64>" >&2
     exit 2
     ;;
 esac
