@@ -988,6 +988,126 @@ test("ChatOrchestrator switches projects and tasks through cards", async () => {
   assert.equal(activeProject?.tasks.find((task) => task.id === "task-b2")?.name, "Codex机器人");
 });
 
+test("ChatOrchestrator creates a task after the task-card prompt", async () => {
+  const now = new Date().toISOString();
+  const sessionStore = new SessionStore();
+  const runStore = new RunStore();
+  const conversationStore = new ConversationStore();
+  const projector = new MessageProjector(runStore, conversationStore);
+  sessionStore.save({
+    chatId: "oc_group_1",
+    threadId: "thread_original",
+    workspaceId: "/workspace",
+    activeProjectId: "project-1",
+    projects: [{
+      id: "project-1",
+      name: "机器人",
+      workspaceId: "/workspace",
+      activeTaskId: "task-original",
+      tasks: [{
+        id: "task-original",
+        name: "默认任务",
+        threadId: "thread_original",
+        createdAt: now,
+        updatedAt: now
+      }],
+      createdAt: now,
+      updatedAt: now
+    }],
+    updatedAt: now
+  });
+  const sentCards: string[] = [];
+  const updatedCards: string[] = [];
+  const replies: string[] = [];
+  const orchestrator = new ChatOrchestrator(
+    sessionStore,
+    runStore,
+    conversationStore,
+    {
+      async sendText(_chatId: string, content: string) {
+        replies.push(content);
+        return "om_text";
+      },
+      async sendCard(_chatId: string, content: string) {
+        sentCards.push(content);
+        return "om_task_menu";
+      },
+      async updateCard(_messageId: string, content: string) {
+        updatedCards.push(content);
+      },
+      schedule() {
+        return undefined;
+      },
+      async flushRun() {
+        return undefined;
+      }
+    } as never,
+    projector,
+    {
+      async ensureThread() {
+        return "thread_unused";
+      },
+      async *runTurn(): AsyncGenerator<CodexEvent> {
+        return;
+      }
+    },
+    "/workspace",
+    createLogger()
+  );
+
+  orchestrator.enqueue(createMessage({ messageId: "om_task_menu_request", text: "任务" }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.match(sentCards[0] ?? "", /task_create_prompt/);
+
+  assert.equal(orchestrator.enqueueCardAction({
+    chatId: "oc_group_1",
+    messageId: "om_task_menu",
+    operatorOpenId: "ou_user_1",
+    value: { kind: "task_create_prompt" },
+    raw: {}
+  }), true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(sessionStore.get("oc_group_1")?.pendingTaskCreation?.projectId, "project-1");
+  assert.match(updatedCards[0] ?? "", /新建任务/);
+
+  orchestrator.enqueue(createMessage({ messageId: "om_task_name", text: "登录排障" }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const project = sessionStore.get("oc_group_1")?.projects?.[0];
+  const created = project?.tasks.find((task) => task.name === "登录排障");
+  assert.ok(created);
+  assert.equal(project?.activeTaskId, created?.id);
+  assert.match(created?.threadId ?? "", /^pending:/);
+  assert.equal(sessionStore.get("oc_group_1")?.pendingTaskCreation, undefined);
+  assert.match(replies.at(-1) ?? "", /已创建并切换到任务“登录排障”/);
+
+  assert.equal(orchestrator.enqueueCardAction({
+    chatId: "oc_group_1",
+    messageId: "om_task_menu_again",
+    operatorOpenId: "ou_user_1",
+    value: { kind: "task_create_prompt" },
+    raw: {}
+  }), true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  orchestrator.enqueue(createMessage({ messageId: "om_task_cancel", text: "取消" }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(sessionStore.get("oc_group_1")?.pendingTaskCreation, undefined);
+  assert.match(replies.at(-1) ?? "", /已取消新建任务/);
+
+  sessionStore.update("oc_group_1", {
+    pendingTaskCreation: {
+      projectId: "project-1",
+      operatorOpenId: "ou_user_1",
+      createdAt: new Date(Date.now() - 11 * 60 * 1000).toISOString()
+    }
+  });
+  orchestrator.enqueue(createMessage({ messageId: "om_task_expired", text: "过期任务" }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(sessionStore.get("oc_group_1")?.pendingTaskCreation, undefined);
+  assert.equal(project?.tasks.some((task) => task.name === "过期任务"), false);
+  assert.match(replies.at(-1) ?? "", /新建任务请求已过期/);
+});
+
 test("ChatOrchestrator starts a pending task in runTurn without precreating a thread", async () => {
   const sessionStore = new SessionStore();
   const runStore = new RunStore();

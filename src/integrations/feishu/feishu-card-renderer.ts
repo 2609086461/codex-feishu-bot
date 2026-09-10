@@ -453,7 +453,33 @@ export function renderTaskSelectionCard(input: {
           task.current ? "primary" : "default"
         )
       )),
-      legacyMarkdown("卡片 10 分钟内有效；也可以回复原来的序号。发送“新任务 名称”可创建独立任务。")
+      ...actionRows([
+        cardButton("＋新建任务", { kind: "task_create_prompt" }, "primary")
+      ]),
+      legacyMarkdown("卡片 10 分钟内有效；也可以回复原来的序号。点击“＋新建任务”后直接发送任务名称。")
+    ]
+  };
+  return JSON.stringify(card);
+}
+
+export function renderTaskCreationPromptCard(input: { projectName: string }): string {
+  const card: LegacyInteractiveCard = {
+    config: {
+      wide_screen_mode: true,
+      enable_forward: false,
+      update_multi: true
+    },
+    header: {
+      template: "orange",
+      title: {
+        tag: "plain_text",
+        content: "新建任务"
+      }
+    },
+    elements: [
+      legacyMarkdown(
+        `当前项目：**${input.projectName}**\n\n请直接发送任务名称。10 分钟内有效；发送“取消”可退出。`
+      )
     ]
   };
   return JSON.stringify(card);

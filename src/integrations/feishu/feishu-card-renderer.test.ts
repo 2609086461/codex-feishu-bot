@@ -8,6 +8,7 @@ import {
   renderModelSelectionCard,
   renderProjectSelectionCard,
   renderProgressCardContent,
+  renderTaskCreationPromptCard,
   renderTaskSelectionCard,
   renderToolCardContent
 } from "./feishu-card-renderer.js";
@@ -215,4 +216,11 @@ test("project and task selection cards carry stable ids instead of list indexes"
     kind: "task_select",
     taskId: "task-1"
   });
+  assert.deepEqual(taskCard.elements[2].actions[0].value, {
+    kind: "task_create_prompt"
+  });
+
+  const createPrompt = JSON.parse(renderTaskCreationPromptCard({ projectName: "机器人" }));
+  assert.equal(createPrompt.header.title.content, "新建任务");
+  assert.match(createPrompt.elements[0].text.content, /发送任务名称/);
 });

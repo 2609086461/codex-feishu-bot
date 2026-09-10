@@ -18,6 +18,7 @@ import {
   renderModelSelectionCard,
   renderProjectSelectionCard,
   renderSelectionConfirmedCard,
+  renderTaskCreationPromptCard,
   renderTaskSelectionCard
 } from "../integrations/feishu/feishu-card-renderer.js";
 import { ConversationStore } from "../stores/conversation-store.js";
@@ -94,9 +95,30 @@ export class ChatOrchestrator {
     }
 
     const existingSession = this.sessionStore.get(message.chatId);
-    if (this.isInterruptCommand(message.text)) {
+    if (this.isInterruptCommand(message.text) && !existingSession?.pendingTaskCreation) {
       void this.interruptActiveTurn(existingSession, message);
       return;
+    }
+    const directWorkspaceCommand = parseWorkspaceCommand(message.text);
+    const directSettingsCommand = parseChatSettingsCommand(message.text);
+    if (existingSession?.pendingTaskCreation) {
+      const pending = existingSession.pendingTaskCreation;
+      if (!this.hasFreshPendingTaskCreation(existingSession)) {
+        this.clearPendingTaskCreation(message.chatId);
+        if (!directWorkspaceCommand && !directSettingsCommand) {
+          void this.deliveryService.sendText(
+            message.chatId,
+            "新建任务请求已过期。请重新发送“任务”并点击“＋新建任务”。"
+          );
+          return;
+        }
+      } else if (message.senderId === pending.operatorOpenId) {
+        if (!directWorkspaceCommand && !directSettingsCommand) {
+          void this.handlePendingTaskCreation(message, existingSession, pending);
+          return;
+        }
+        this.clearPendingTaskCreation(message.chatId);
+      }
     }
     const numericSelection = message.text.trim().match(/^\d+$/);
     const pendingNavigationAt = existingSession?.pendingNavigation?.createdAt
@@ -124,7 +146,7 @@ export class ChatOrchestrator {
         Number.isFinite(pendingEffortAt) &&
         Date.now() - pendingEffortAt <= 10 * 60 * 1000
     );
-    let settingsCommand = parseChatSettingsCommand(message.text);
+    let settingsCommand = directSettingsCommand;
     if (!settingsCommand && !hasValidPendingNavigation && hasValidPendingEffortSelection) {
       const namedEffort = normalizeReasoningEffort(message.text);
       if (numericSelection) {
@@ -149,7 +171,7 @@ export class ChatOrchestrator {
         };
       }
     }
-    const workspaceCommand = parseWorkspaceCommand(message.text) ??
+    const workspaceCommand = directWorkspaceCommand ??
       (!settingsCommand && hasValidPendingNavigation && numericSelection
         ? {
             kind: "navigation_pick" as const,
@@ -270,6 +292,23 @@ export class ChatOrchestrator {
       return true;
     }
 
+    if (kind === "task_create_prompt") {
+      const project = session ? this.activeProject(session) : undefined;
+      if (!session || session.activeRunId || !project) {
+        return false;
+      }
+      this.sessionStore.update(action.chatId, {
+        pendingNavigation: undefined,
+        pendingTaskCreation: {
+          projectId: project.id,
+          operatorOpenId: action.operatorOpenId,
+          createdAt: new Date().toISOString()
+        }
+      });
+      void this.applyTaskCreationPrompt(action, project);
+      return true;
+    }
+
     return false;
   }
 
@@ -303,6 +342,17 @@ export class ChatOrchestrator {
     return Boolean(
       session.pendingNavigation?.kind === kind &&
         session.pendingNavigation.ids.length &&
+        Number.isFinite(createdAt) &&
+        Date.now() - createdAt <= 10 * 60 * 1000
+    );
+  }
+
+  private hasFreshPendingTaskCreation(session: ChatSession): boolean {
+    const createdAt = session.pendingTaskCreation?.createdAt
+      ? Date.parse(session.pendingTaskCreation.createdAt)
+      : Number.NaN;
+    return Boolean(
+      session.pendingTaskCreation &&
         Number.isFinite(createdAt) &&
         Date.now() - createdAt <= 10 * 60 * 1000
     );
@@ -475,6 +525,77 @@ export class ChatOrchestrator {
       );
     } catch (error) {
       await this.reportCardActionFailure(action, error);
+    }
+  }
+
+  private async applyTaskCreationPrompt(
+    action: IncomingCardAction,
+    project: ChatProject
+  ): Promise<void> {
+    try {
+      await this.updateCardOrSendText(
+        action,
+        renderTaskCreationPromptCard({ projectName: project.name }),
+        `请为项目“${project.name}”发送任务名称。10 分钟内有效；发送“取消”可退出。`
+      );
+    } catch (error) {
+      this.clearPendingTaskCreation(action.chatId);
+      await this.reportCardActionFailure(action, error);
+    }
+  }
+
+  private async handlePendingTaskCreation(
+    message: IncomingChatMessage,
+    session: ChatSession,
+    pending: NonNullable<ChatSession["pendingTaskCreation"]>
+  ): Promise<void> {
+    const input = message.text.trim();
+    if (/^(?:取消|cancel)$/i.test(input)) {
+      this.clearPendingTaskCreation(message.chatId);
+      await this.deliveryService.sendText(message.chatId, "已取消新建任务。");
+      return;
+    }
+    if (session.activeRunId) {
+      this.clearPendingTaskCreation(message.chatId);
+      await this.deliveryService.sendText(message.chatId, "当前任务仍在执行，无法新建任务。");
+      return;
+    }
+
+    try {
+      const project = session.projects?.find((item) => item.id === pending.projectId);
+      if (!project) {
+        this.clearPendingTaskCreation(message.chatId);
+        await this.deliveryService.sendText(
+          message.chatId,
+          "原项目已不可用，请重新发送“任务”后再新建。"
+        );
+        return;
+      }
+      const name = this.validateName(input, "任务", 60);
+      if (project.tasks.some((task) => task.name === name)) {
+        await this.deliveryService.sendText(
+          message.chatId,
+          "当前项目已经存在同名任务，请换一个名称，或发送“取消”。"
+        );
+        return;
+      }
+      const now = new Date().toISOString();
+      const task = this.createTask(message.chatId, name, now);
+      const nextProject: ChatProject = {
+        ...project,
+        tasks: [...project.tasks, task],
+        activeTaskId: task.id,
+        updatedAt: now
+      };
+      this.activateProjectTask(message.chatId, session, nextProject, task);
+      this.clearPendingTaskCreation(message.chatId);
+      await this.deliveryService.sendText(
+        message.chatId,
+        `已创建并切换到任务“${name}”。这是一个全新的 Codex 对话，不会带入其他任务的上下文。`
+      );
+    } catch (error) {
+      const errorText = error instanceof Error ? error.message : String(error);
+      await this.deliveryService.sendText(message.chatId, `新建任务失败：${errorText}`);
     }
   }
 
@@ -1036,6 +1157,12 @@ export class ChatOrchestrator {
       pendingModelForEffort: undefined,
       pendingEffortOptions: undefined,
       pendingEffortSelectionAt: undefined
+    });
+  }
+
+  private clearPendingTaskCreation(chatId: string): void {
+    this.sessionStore.update(chatId, {
+      pendingTaskCreation: undefined
     });
   }
 
