@@ -20,6 +20,13 @@ Read the repository `AGENTS.md` and determine the target operating mode before a
 - Keep local and cloud runtime state independent. Git synchronizes implementation and rules, not live conversations or credentials.
 - Do not mutate Feishu, GitHub, cloud services, scheduled tasks, or live processes without authorization for that external action.
 
+## Correcting Live Metadata
+
+- For a small, explicitly authorized correction to a known live record (for example, a project or task name), first identify the application's authoritative state and use its normal administration path. Do not treat a running process's persisted snapshot as an ordinary editable file.
+- When the user has explicitly granted normal server administration access, use that direct channel for the scoped correction. Do not create a temporary forced-command controller, hard-code user data into deployment scripts, or stop/restart the bot merely to work around an overly narrow control key.
+- If the available channel is restricted, state that constraint before changing implementation or infrastructure. Ask for the appropriate direct access or a purpose-built app-level operation; do not improvise a production mutation path during the correction.
+- For operations that can wait, start background work and report its completion separately. Keep a user interaction responsive rather than holding it behind synchronous build, shutdown, or restart waits.
+
 ## Synchronize And Verify
 
 - Check repository status before edits or synchronization. Pull only by fast-forward from a clean working tree; never discard divergence or force-push.
