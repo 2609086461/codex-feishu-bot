@@ -159,18 +159,20 @@ index 47d79c5..2faa08d 100644
  				seen[seq] = true
  				mu.Unlock()
 diff --git a/service.go b/service.go
-index 499b216..cb1d172 100644
+index 499b216..f0c8f1a 100644
 --- a/service.go
 +++ b/service.go
-@@ -52,6 +52,7 @@ type LoginQrcodeResponse struct {
+@@ -52,6 +52,9 @@ type LoginQrcodeResponse struct {
  	Timeout    string `json:"timeout"`
  	IsLoggedIn bool   `json:"is_logged_in"`
  	Img        string `json:"img,omitempty"`
 +	Stage      string `json:"stage,omitempty"`
++	CurrentURL string `json:"current_url,omitempty"`
++	DebugImg   string `json:"debug_img,omitempty"`
  }
  
  // PublishResponse 发布响应
-@@ -135,6 +136,10 @@ func (s *XiaohongshuService) CheckLoginStatus(ctx context.Context) (*LoginStatus
+@@ -135,6 +138,10 @@ func (s *XiaohongshuService) CheckLoginStatus(ctx context.Context) (*LoginStatus
  
  // GetLoginQrcode 获取登录的扫码二维码
  func (s *XiaohongshuService) GetLoginQrcode(ctx context.Context) (*LoginQrcodeResponse, error) {
@@ -181,7 +183,7 @@ index 499b216..cb1d172 100644
  	b := newBrowser()
  	page := b.NewPage()
  
-@@ -145,7 +150,7 @@ func (s *XiaohongshuService) GetLoginQrcode(ctx context.Context) (*LoginQrcodeRe
+@@ -145,7 +152,7 @@ func (s *XiaohongshuService) GetLoginQrcode(ctx context.Context) (*LoginQrcodeRe
  
  	loginAction := xiaohongshu.NewLogin(page)
  
@@ -190,7 +192,7 @@ index 499b216..cb1d172 100644
  	if err != nil || loggedIn {
  		defer deferFunc()
  	}
-@@ -168,6 +173,7 @@ func (s *XiaohongshuService) GetLoginQrcode(ctx context.Context) (*LoginQrcodeRe
+@@ -168,6 +175,7 @@ func (s *XiaohongshuService) GetLoginQrcode(ctx context.Context) (*LoginQrcodeRe
  		}(),
  		Img:        img,
  		IsLoggedIn: loggedIn,
@@ -198,28 +200,47 @@ index 499b216..cb1d172 100644
  	}, nil
  }
  
-@@ -179,7 +185,15 @@ func (s *XiaohongshuService) waitScanInBackground(
+@@ -179,7 +187,21 @@ func (s *XiaohongshuService) waitScanInBackground(
  	loginAction *xiaohongshu.LoginAction, page *rod.Page, closeBrowser func(), timeout time.Duration,
  ) {
  	ctxTimeout, cancel := context.WithTimeout(context.Background(), timeout)
 -	seq := s.logins.start(cancel)
 +	seq := s.logins.start(cancel, func(ctx context.Context) (*LoginQrcodeResponse, error) {
 +		img, stage, loggedIn, err := loginAction.CurrentQrcodeImage(ctx)
++		currentURL, debugImg, debugErr := loginAction.DebugSnapshot(ctx)
++		if err == nil && debugErr != nil {
++			err = debugErr
++		}
 +		return &LoginQrcodeResponse{
 +			Timeout:    timeout.String(),
 +			IsLoggedIn: loggedIn,
 +			Img:        img,
 +			Stage:      stage,
++			CurrentURL: currentURL,
++			DebugImg:   debugImg,
 +		}, err
 +	})
  	logrus.Infof("等待扫码登录，会话 #%d，超时 %s", seq, timeout)
  
  	go func() {
 diff --git a/xiaohongshu/login.go b/xiaohongshu/login.go
-index 67e002d..3b375aa 100644
+index 67e002d..c6eb9c2 100644
 --- a/xiaohongshu/login.go
 +++ b/xiaohongshu/login.go
-@@ -24,16 +24,36 @@ func (a *LoginAction) CheckLoginStatus(ctx context.Context) (bool, error) {
+@@ -2,10 +2,12 @@ package xiaohongshu
+ 
+ import (
+ 	"context"
++	"encoding/base64"
+ 	"encoding/json"
+ 	"time"
+ 
+ 	"github.com/go-rod/rod"
++	"github.com/go-rod/rod/lib/proto"
+ 	"github.com/pkg/errors"
+ )
+ 
+@@ -24,16 +26,36 @@ func (a *LoginAction) CheckLoginStatus(ctx context.Context) (bool, error) {
  
  	time.Sleep(1 * time.Second)
  
@@ -261,7 +282,7 @@ index 67e002d..3b375aa 100644
  }
  
  // CurrentUser 当前登录用户的基础信息。
-@@ -87,7 +107,7 @@ func (a *LoginAction) Login(ctx context.Context) error {
+@@ -87,7 +109,7 @@ func (a *LoginAction) Login(ctx context.Context) error {
  	return nil
  }
  
@@ -270,7 +291,7 @@ index 67e002d..3b375aa 100644
  	pp := a.page.Context(ctx)
  
  	// 导航到小红书首页，这会触发二维码弹窗
-@@ -95,19 +115,55 @@ func (a *LoginAction) FetchQrcodeImage(ctx context.Context) (string, bool, error
+@@ -95,19 +117,72 @@ func (a *LoginAction) FetchQrcodeImage(ctx context.Context) (string, bool, error
  
  	time.Sleep(2 * time.Second)
  
@@ -300,7 +321,9 @@ index 67e002d..3b375aa 100644
 +	}
 +	if loggedIn {
 +		return "", "logged_in", true, nil
-+	}
+ 	}
+-	if src == nil || len(*src) == 0 {
+-		return "", false, errors.New("qrcode src is empty")
 +
 +	selectors := []struct {
 +		name     string
@@ -308,9 +331,7 @@ index 67e002d..3b375aa 100644
 +	}{
 +		{name: "device_verification", selector: ".r-captcha-modal .qrcode-img"},
 +		{name: "initial", selector: ".login-container .qrcode-img"},
- 	}
--	if src == nil || len(*src) == 0 {
--		return "", false, errors.New("qrcode src is empty")
++	}
 +	for _, candidate := range selectors {
 +		exists, element, err := pp.Has(candidate.selector)
 +		if err != nil {
@@ -330,10 +351,27 @@ index 67e002d..3b375aa 100644
  
 -	return *src, false, nil
 +	return "", "", false, errors.New("qrcode element not found")
++}
++
++// DebugSnapshot captures only the current page URL and a PNG screenshot. It is
++// used to diagnose login transitions without exposing cookies or token values.
++func (a *LoginAction) DebugSnapshot(ctx context.Context) (string, string, error) {
++	pp := a.page.Context(ctx).Timeout(10 * time.Second)
++	info, err := pp.Info()
++	if err != nil {
++		return "", "", errors.Wrap(err, "get login page info failed")
++	}
++	png, err := pp.Screenshot(false, &proto.PageCaptureScreenshot{
++		Format: proto.PageCaptureScreenshotFormatPng,
++	})
++	if err != nil {
++		return info.URL, "", errors.Wrap(err, "capture login page failed")
++	}
++	return info.URL, "data:image/png;base64," + base64.StdEncoding.EncodeToString(png), nil
  }
  
  func (a *LoginAction) WaitForLogin(ctx context.Context) bool {
-@@ -120,8 +176,8 @@ func (a *LoginAction) WaitForLogin(ctx context.Context) bool {
+@@ -120,8 +195,8 @@ func (a *LoginAction) WaitForLogin(ctx context.Context) bool {
  		case <-ctx.Done():
  			return false
  		case <-ticker.C:

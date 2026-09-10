@@ -15,10 +15,9 @@ RUN git apply --check /tmp/login-device-verification.patch \
 ENV GOPROXY=https://proxy.golang.org,direct
 RUN go test ./...
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -ldflags="-s -w -X main.version=v2.5.0-feishu-login-fix.1" -o /out/app .
+    go build -ldflags="-s -w -X main.version=v2.5.0-feishu-login-fix.2" -o /out/app .
 
 # Keep the upstream browser and runtime dependencies, but replace only the Go
 # service binary built from the pinned source above.
 FROM xpzouying/xiaohongshu-mcp:v2.5.0@sha256:88e2603f324f567e0a254ed7a1e24d632a16eccc30e84ef3fb887e34a03d0fe3
 COPY --from=builder /out/app /app/app
-

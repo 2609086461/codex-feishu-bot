@@ -2,7 +2,7 @@ services:
   xiaohongshu-mcp:
     # The runtime image is pinned to upstream v2.5.0 and replaces only its Go
     # binary with the reviewed login-session patch in this repository.
-    image: ${XHS_MCP_IMAGE:-codex-feishu-xhs-patched:v2.5.0-1}
+    image: ${XHS_MCP_IMAGE:-codex-feishu-xhs-patched:v2.5.0-2}
     build:
       context: ../..
       dockerfile: deploy/xiaohongshu-mcp/Dockerfile
