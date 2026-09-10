@@ -1,0 +1,347 @@
+diff --git a/login_session.go b/login_session.go
+index 0d6722a..aff7789 100644
+--- a/login_session.go
++++ b/login_session.go
+@@ -1,6 +1,9 @@
+ package main
+ 
+-import "sync"
++import (
++	"context"
++	"sync"
++)
+ 
+ // loginSessions 管理「已发出二维码、还在等扫码」的登录会话。
+ //
+@@ -8,19 +11,21 @@ import "sync"
+ // 但没有任何东西拦着重复调用，于是每调一次就多一个浏览器活到超时为止。
+ // 这里的约束是：同一时刻只保留一个待扫码会话，开新的就把旧的关掉。
+ type loginSessions struct {
+-	mu     sync.Mutex
+-	seq    uint64
+-	cancel func()
++	mu      sync.Mutex
++	seq     uint64
++	cancel  func()
++	current func(context.Context) (*LoginQrcodeResponse, error)
+ }
+ 
+ // start 结束上一个待扫码会话（如果有），登记新的，返回本次会话的序号。
+ // 序号用于 finish 判断自己是不是仍然是当前会话。
+-func (l *loginSessions) start(cancel func()) uint64 {
++func (l *loginSessions) start(cancel func(), current func(context.Context) (*LoginQrcodeResponse, error)) uint64 {
+ 	l.mu.Lock()
+ 	prev := l.cancel
+ 	l.seq++
+ 	seq := l.seq
+ 	l.cancel = cancel
++	l.current = current
+ 	l.mu.Unlock()
+ 
+ 	// 放到锁外调用：取消动作会触发对方 goroutine 的收尾，避免相互等待
+@@ -30,6 +35,21 @@ func (l *loginSessions) start(cancel func()) uint64 {
+ 	return seq
+ }
+ 
++// reuse returns the QR code currently displayed by the active browser. This is
++// important after the first scan: Xiaohongshu may replace it with a device
++// verification QR code that must be scanned in the same browser session.
++func (l *loginSessions) reuse(ctx context.Context) (*LoginQrcodeResponse, bool, error) {
++	l.mu.Lock()
++	current := l.current
++	l.mu.Unlock()
++
++	if current == nil {
++		return nil, false, nil
++	}
++	result, err := current(ctx)
++	return result, true, err
++}
++
+ // finish 会话自己结束时清理登记。仅当它仍是当前会话才清，
+ // 否则会把后来者的登记抹掉，导致后来者永远不会被 start 关闭。
+ func (l *loginSessions) finish(seq uint64) {
+@@ -38,5 +58,6 @@ func (l *loginSessions) finish(seq uint64) {
+ 
+ 	if l.seq == seq {
+ 		l.cancel = nil
++		l.current = nil
+ 	}
+ }
+diff --git a/login_session_test.go b/login_session_test.go
+index 47d79c5..2faa08d 100644
+--- a/login_session_test.go
++++ b/login_session_test.go
+@@ -1,6 +1,7 @@
+ package main
+ 
+ import (
++	"context"
+ 	"sync"
+ 	"testing"
+ 
+@@ -12,30 +13,45 @@ import (
+ // 这是浏览器不再堆积的依据：每个待扫码会话都占着一个浏览器活到超时为止，
+ // 只要新会话没能关掉旧的，进程就会累积。
+ func TestLoginSessions(t *testing.T) {
++	t.Run("复用当前会话不会关闭浏览器", func(t *testing.T) {
++		var l loginSessions
++		closed := 0
++		l.start(func() { closed++ }, func(context.Context) (*LoginQrcodeResponse, error) {
++			return &LoginQrcodeResponse{Stage: "device_verification", Img: "qr"}, nil
++		})
++
++		result, ok, err := l.reuse(context.Background())
++		assert.NoError(t, err)
++		assert.True(t, ok)
++		assert.Equal(t, "device_verification", result.Stage)
++		assert.Equal(t, "qr", result.Img)
++		assert.Equal(t, 0, closed)
++	})
++
+ 	t.Run("开新会话会关掉上一个", func(t *testing.T) {
+ 		var l loginSessions
+ 		closed := 0
+ 
+-		l.start(func() { closed++ })
++		l.start(func() { closed++ }, nil)
+ 		assert.Equal(t, 0, closed, "第一个会话不该被关")
+ 
+-		l.start(func() {})
++		l.start(func() {}, nil)
+ 		assert.Equal(t, 1, closed, "开第二个时应关掉第一个")
+ 	})
+ 
+ 	t.Run("第一个会话无需关闭任何东西", func(t *testing.T) {
+ 		var l loginSessions
+-		assert.NotPanics(t, func() { l.start(func() {}) })
++		assert.NotPanics(t, func() { l.start(func() {}, nil) })
+ 	})
+ 
+ 	t.Run("会话结束后不会再被关第二次", func(t *testing.T) {
+ 		var l loginSessions
+ 		closed := 0
+ 
+-		seq := l.start(func() { closed++ })
++		seq := l.start(func() { closed++ }, nil)
+ 		l.finish(seq)
+ 
+-		l.start(func() {})
++		l.start(func() {}, nil)
+ 		assert.Equal(t, 0, closed, "已结束的会话不该再被关闭")
+ 	})
+ 
+@@ -43,14 +59,14 @@ func TestLoginSessions(t *testing.T) {
+ 		var l loginSessions
+ 		newClosed := 0
+ 
+-		oldSeq := l.start(func() {})
+-		l.start(func() { newClosed++ }) // 新会话上位
++		oldSeq := l.start(func() {}, nil)
++		l.start(func() { newClosed++ }, nil) // 新会话上位
+ 
+ 		// 旧会话此时才走完收尾，它必须认出自己已不是当前会话
+ 		l.finish(oldSeq)
+ 
+ 		// 再开一个：如果上一步误清了登记，新会话就永远关不掉了
+-		l.start(func() {})
++		l.start(func() {}, nil)
+ 		assert.Equal(t, 1, newClosed, "新会话仍应被后来者关闭")
+ 	})
+ 
+@@ -66,7 +82,7 @@ func TestLoginSessions(t *testing.T) {
+ 			wg.Add(1)
+ 			go func() {
+ 				defer wg.Done()
+-				seq := l.start(func() {})
++				seq := l.start(func() {}, nil)
+ 				mu.Lock()
+ 				seen[seq] = true
+ 				mu.Unlock()
+diff --git a/service.go b/service.go
+index 499b216..cb1d172 100644
+--- a/service.go
++++ b/service.go
+@@ -52,6 +52,7 @@ type LoginQrcodeResponse struct {
+ 	Timeout    string `json:"timeout"`
+ 	IsLoggedIn bool   `json:"is_logged_in"`
+ 	Img        string `json:"img,omitempty"`
++	Stage      string `json:"stage,omitempty"`
+ }
+ 
+ // PublishResponse 发布响应
+@@ -135,6 +136,10 @@ func (s *XiaohongshuService) CheckLoginStatus(ctx context.Context) (*LoginStatus
+ 
+ // GetLoginQrcode 获取登录的扫码二维码
+ func (s *XiaohongshuService) GetLoginQrcode(ctx context.Context) (*LoginQrcodeResponse, error) {
++	if result, ok, err := s.logins.reuse(ctx); ok {
++		return result, err
++	}
++
+ 	b := newBrowser()
+ 	page := b.NewPage()
+ 
+@@ -145,7 +150,7 @@ func (s *XiaohongshuService) GetLoginQrcode(ctx context.Context) (*LoginQrcodeRe
+ 
+ 	loginAction := xiaohongshu.NewLogin(page)
+ 
+-	img, loggedIn, err := loginAction.FetchQrcodeImage(ctx)
++	img, stage, loggedIn, err := loginAction.FetchQrcodeImage(ctx)
+ 	if err != nil || loggedIn {
+ 		defer deferFunc()
+ 	}
+@@ -168,6 +173,7 @@ func (s *XiaohongshuService) GetLoginQrcode(ctx context.Context) (*LoginQrcodeRe
+ 		}(),
+ 		Img:        img,
+ 		IsLoggedIn: loggedIn,
++		Stage:      stage,
+ 	}, nil
+ }
+ 
+@@ -179,7 +185,15 @@ func (s *XiaohongshuService) waitScanInBackground(
+ 	loginAction *xiaohongshu.LoginAction, page *rod.Page, closeBrowser func(), timeout time.Duration,
+ ) {
+ 	ctxTimeout, cancel := context.WithTimeout(context.Background(), timeout)
+-	seq := s.logins.start(cancel)
++	seq := s.logins.start(cancel, func(ctx context.Context) (*LoginQrcodeResponse, error) {
++		img, stage, loggedIn, err := loginAction.CurrentQrcodeImage(ctx)
++		return &LoginQrcodeResponse{
++			Timeout:    timeout.String(),
++			IsLoggedIn: loggedIn,
++			Img:        img,
++			Stage:      stage,
++		}, err
++	})
+ 	logrus.Infof("等待扫码登录，会话 #%d，超时 %s", seq, timeout)
+ 
+ 	go func() {
+diff --git a/xiaohongshu/login.go b/xiaohongshu/login.go
+index 67e002d..3b375aa 100644
+--- a/xiaohongshu/login.go
++++ b/xiaohongshu/login.go
+@@ -24,16 +24,36 @@ func (a *LoginAction) CheckLoginStatus(ctx context.Context) (bool, error) {
+ 
+ 	time.Sleep(1 * time.Second)
+ 
+-	exists, _, err := pp.Has(`.main-container .user .link-wrapper .channel`)
++	return a.isLoggedIn(pp)
++}
++
++// isLoggedIn combines the historical sidebar selector with authenticated user
++// state. The latter prevents false negatives when Xiaohongshu changes its DOM.
++func (a *LoginAction) isLoggedIn(page *rod.Page) (bool, error) {
++	exists, _, err := page.Has(`.main-container .user .link-wrapper .channel`)
+ 	if err != nil {
+ 		return false, errors.Wrap(err, "check login status failed")
+ 	}
+-
+-	if !exists {
+-		return false, errors.Wrap(err, "login status element not found")
++	if exists {
++		return true, nil
+ 	}
+ 
+-	return true, nil
++	res, err := page.Eval(`() => {
++		const unwrap = value => {
++			if (!value || typeof value !== "object") return value;
++			if (value.value !== undefined) return value.value;
++			if (value._value !== undefined) return value._value;
++			return value;
++		};
++		const user = window.__INITIAL_STATE__ && window.__INITIAL_STATE__.user;
++		const candidates = user ? [user.userInfo, user.currentUser, user.me] : [];
++		const info = candidates.map(unwrap).find(value => value && typeof value === "object");
++		return Boolean(info && info.guest !== true && (info.userId || info.user_id || info.nickname));
++	}`)
++	if err != nil {
++		return false, errors.Wrap(err, "read login page state failed")
++	}
++	return res.Value.Bool(), nil
+ }
+ 
+ // CurrentUser 当前登录用户的基础信息。
+@@ -87,7 +107,7 @@ func (a *LoginAction) Login(ctx context.Context) error {
+ 	return nil
+ }
+ 
+-func (a *LoginAction) FetchQrcodeImage(ctx context.Context) (string, bool, error) {
++func (a *LoginAction) FetchQrcodeImage(ctx context.Context) (string, string, bool, error) {
+ 	pp := a.page.Context(ctx)
+ 
+ 	// 导航到小红书首页，这会触发二维码弹窗
+@@ -95,19 +115,55 @@ func (a *LoginAction) FetchQrcodeImage(ctx context.Context) (string, bool, error
+ 
+ 	time.Sleep(2 * time.Second)
+ 
+-	if exists, _, _ := pp.Has(".main-container .user .link-wrapper .channel"); exists {
+-		return "", true, nil
++	loggedIn, err := a.isLoggedIn(pp)
++	if err != nil {
++		return "", "", false, err
++	}
++	if loggedIn {
++		return "", "logged_in", true, nil
+ 	}
+ 
+-	src, err := pp.MustElement(".login-container .qrcode-img").Attribute("src")
++	return a.CurrentQrcodeImage(ctx)
++}
++
++// CurrentQrcodeImage reads the active login page without navigating or opening
++// a new browser. Device verification must win because the original QR image may
++// remain in the DOM after the security modal appears.
++func (a *LoginAction) CurrentQrcodeImage(ctx context.Context) (string, string, bool, error) {
++	pp := a.page.Context(ctx).Timeout(10 * time.Second)
++	loggedIn, err := a.isLoggedIn(pp)
+ 	if err != nil {
+-		return "", false, errors.Wrap(err, "get qrcode src failed")
++		return "", "", false, err
++	}
++	if loggedIn {
++		return "", "logged_in", true, nil
++	}
++
++	selectors := []struct {
++		name     string
++		selector string
++	}{
++		{name: "device_verification", selector: ".r-captcha-modal .qrcode-img"},
++		{name: "initial", selector: ".login-container .qrcode-img"},
+ 	}
+-	if src == nil || len(*src) == 0 {
+-		return "", false, errors.New("qrcode src is empty")
++	for _, candidate := range selectors {
++		exists, element, err := pp.Has(candidate.selector)
++		if err != nil {
++			return "", "", false, errors.Wrap(err, "find qrcode element failed")
++		}
++		if !exists || element == nil {
++			continue
++		}
++		src, err := element.Attribute("src")
++		if err != nil {
++			return "", "", false, errors.Wrap(err, "get qrcode src failed")
++		}
++		if src != nil && len(*src) > 0 {
++			return *src, candidate.name, false, nil
++		}
+ 	}
+ 
+-	return *src, false, nil
++	return "", "", false, errors.New("qrcode element not found")
+ }
+ 
+ func (a *LoginAction) WaitForLogin(ctx context.Context) bool {
+@@ -120,8 +176,8 @@ func (a *LoginAction) WaitForLogin(ctx context.Context) bool {
+ 		case <-ctx.Done():
+ 			return false
+ 		case <-ticker.C:
+-			el, err := pp.Element(".main-container .user .link-wrapper .channel")
+-			if err == nil && el != nil {
++			loggedIn, err := a.isLoggedIn(pp)
++			if err == nil && loggedIn {
+ 				return true
+ 			}
+ 		}
+

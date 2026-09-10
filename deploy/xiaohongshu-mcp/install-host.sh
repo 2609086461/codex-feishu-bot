@@ -75,6 +75,10 @@ trap - EXIT HUP INT TERM
 
 docker compose --env-file "$ENV_FILE" \
   -f "$ROOT_DIR/deploy/xiaohongshu-mcp/docker-compose.yml" \
+  -p codex-feishu-xhs build xiaohongshu-mcp
+
+docker compose --env-file "$ENV_FILE" \
+  -f "$ROOT_DIR/deploy/xiaohongshu-mcp/docker-compose.yml" \
   -p codex-feishu-xhs up -d
 
 # Keep the SSH forced-command controller in sync with the deployed source.

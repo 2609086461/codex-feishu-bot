@@ -1,8 +1,11 @@
 services:
   xiaohongshu-mcp:
-    # This is an independently maintained third-party image. Do not add
-    # --pull always to routine bot deployments; upgrade it deliberately.
-    image: ${XHS_MCP_IMAGE:-xpzouying/xiaohongshu-mcp:latest}
+    # The runtime image is pinned to upstream v2.5.0 and replaces only its Go
+    # binary with the reviewed login-session patch in this repository.
+    image: ${XHS_MCP_IMAGE:-codex-feishu-xhs-patched:v2.5.0-1}
+    build:
+      context: ../..
+      dockerfile: deploy/xiaohongshu-mcp/Dockerfile
     restart: unless-stopped
     init: true
     shm_size: 512mb
@@ -13,6 +16,8 @@ services:
     environment:
       AUTH_TOKEN: ${XHS_MCP_AUTH_TOKEN:?set XHS_MCP_AUTH_TOKEN in the private bot env file}
       COOKIES_PATH: /app/data/cookies.json
+      HOME: /app/data/home
+      XDG_CONFIG_HOME: /app/data/config
     volumes:
       - ${XHS_MCP_DATA_DIR:-/var/lib/codex-feishu/xiaohongshu-mcp/data}:/app/data
       - ${XHS_MCP_IMAGES_DIR:-/var/lib/codex-feishu/xiaohongshu-mcp/images}:/app/images
