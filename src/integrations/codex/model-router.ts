@@ -15,10 +15,18 @@ export const ALL_REASONING_EFFORTS: ReasoningEffort[] = [
 
 const AUTO_ROUTE_CONFIDENCE_THRESHOLD = 0.65;
 
-// The owner can still choose every visible model manually. Automatic routing
-// deliberately avoids the highest-cost GPT-6/Astra family.
-export function isAutoRouteEligible(model: CodexModelInfo): boolean {
-  return !model.hidden && !/gpt[ -]?6|astra/i.test(`${model.model} ${model.displayName}`);
+export const SAFE_CODEX_CHATGPT_MODEL = "gpt-5.6-luna";
+
+export function isCodexChatGptCompatibleModel(model: CodexModelInfo): boolean {
+  return !/^gpt-5\.4(?:-|$)/i.test(model.model) &&
+    !/^gpt-\d+(?:\.\d+)?-(?:mini|nano)(?:-|$)/i.test(model.model);
+}
+
+// Expensive GPT-6/Astra models remain available for an explicit manual choice,
+// but are not candidates for automatic routing.
+export function isAutoRoutableModel(model: CodexModelInfo): boolean {
+  return isCodexChatGptCompatibleModel(model) &&
+    !/(?:^gpt-6(?:-|$)|astra)/i.test(`${model.model} ${model.displayName}`);
 }
 
 function isReasoningEffort(value: unknown): value is ReasoningEffort {
@@ -35,15 +43,15 @@ export function reasoningEffortsFor(model: CodexModelInfo): ReasoningEffort[] {
 }
 
 export function pickRouterModel(models: CodexModelInfo[]): CodexModelInfo | undefined {
-  const visible = models.filter(isAutoRouteEligible);
+  const visible = models.filter((model) => !model.hidden && isAutoRoutableModel(model));
   return visible.find((model) => /luna/i.test(model.model)) ??
-    visible.find((model) => /mini|fast|nano/i.test(`${model.model} ${model.displayName}`)) ??
+    visible.find((model) => /spark|fast/i.test(`${model.model} ${model.displayName}`)) ??
     visible.find((model) => model.isDefault) ??
     visible[0];
 }
 
 export function pickBalancedFallback(models: CodexModelInfo[]): CodexModelInfo | undefined {
-  const visible = models.filter(isAutoRouteEligible);
+  const visible = models.filter((model) => !model.hidden && isAutoRoutableModel(model));
   return visible.find((model) => /sol/i.test(model.model)) ??
     visible.find((model) => /terra/i.test(model.model)) ??
     visible.find((model) => model.isDefault) ??
@@ -72,7 +80,9 @@ export function normalizeRouteDecision(
 
   const value = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
   const selected = typeof value.model === "string"
-    ? models.find((model) => !model.hidden && model.model === value.model)
+    ? models.find((model) =>
+      !model.hidden && isAutoRoutableModel(model) && model.model === value.model
+    )
     : undefined;
   const confidence = typeof value.confidence === "number" && Number.isFinite(value.confidence)
     ? Math.max(0, Math.min(1, value.confidence))
@@ -101,13 +111,13 @@ export function buildRouterPrompt(
   models: CodexModelInfo[]
 ): string {
   const candidates = models
-    .filter(isAutoRouteEligible)
+    .filter((model) => !model.hidden && isAutoRoutableModel(model))
     .map((model) => `${model.model}[${reasoningEffortsFor(model).join("/")}]`)
     .join(",");
 
   return [
     "为下一条 Codex 任务选择模型和推理强度。目标：简单任务省时省 token，复杂任务优先质量。",
-    "规则：luna/mini 处理简短问答、改写、格式化和重复工作；terra 处理普通分析或单点代码任务；sol 处理多步骤编码、排障、部署和重要文档；astra 只用于最复杂、高风险或强推理任务。",
+    "规则：luna 处理简短问答、改写、格式化和重复工作；terra 处理普通分析或单点代码任务；sol 处理多步骤编码、排障、部署、重要文档以及最复杂任务。自动路由禁止选择 GPT-6 或 Astra。",
     "不要调用任何工具。只返回符合 schema 的 JSON。reason 不超过 20 个汉字。",
     `候选=${candidates}`,
     recentContext ? `短上下文=${recentContext}` : "短上下文=(无)",

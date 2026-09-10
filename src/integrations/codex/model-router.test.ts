@@ -4,6 +4,8 @@ import test from "node:test";
 import type { CodexModelInfo } from "../../domain/types.js";
 import {
   buildRouterPrompt,
+  isAutoRoutableModel,
+  isCodexChatGptCompatibleModel,
   normalizeRouteDecision,
   pickRouterModel,
   reasoningEffortsFor
@@ -40,21 +42,71 @@ test("pickRouterModel prefers the fast Luna model", () => {
   assert.equal(pickRouterModel(models)?.model, "gpt-5.6-luna");
 });
 
-test("automatic routing excludes the GPT-6/Astra family", () => {
-  const withAstra: CodexModelInfo[] = [
-    {
-      id: "gpt-6-astra",
-      model: "gpt-6-astra",
-      displayName: "GPT-6-Astra",
-      description: "expensive",
-      hidden: false,
-      isDefault: true
-    },
-    models[1]!
-  ];
+test("generic API mini and nano models are excluded from ChatGPT Codex routing", () => {
+  const apiOnlyMini: CodexModelInfo = {
+    id: "gpt-5.4-mini",
+    model: "gpt-5.4-mini",
+    displayName: "GPT-5.4 Mini",
+    description: "API model",
+    hidden: false,
+    isDefault: false
+  };
+  const chatGptDefault: CodexModelInfo = {
+    id: "gpt-5.6-luna",
+    model: "gpt-5.6-luna",
+    displayName: "GPT-5.6 Luna",
+    description: "ChatGPT Codex model",
+    hidden: false,
+    isDefault: true
+  };
+  const unsupportedChatGptAccountModel: CodexModelInfo = {
+    id: "gpt-5.4",
+    model: "gpt-5.4",
+    displayName: "GPT-5.4",
+    description: "unsupported with this ChatGPT Codex account",
+    hidden: false,
+    isDefault: false
+  };
 
-  assert.equal(pickRouterModel(withAstra)?.model, "gpt-5.6-sol");
-  assert.doesNotMatch(buildRouterPrompt("帮我写代码", "", [], withAstra), /gpt-6-astra/i);
+  assert.equal(isCodexChatGptCompatibleModel(apiOnlyMini), false);
+  assert.equal(isCodexChatGptCompatibleModel(unsupportedChatGptAccountModel), false);
+  assert.equal(isCodexChatGptCompatibleModel(chatGptDefault), true);
+  assert.equal(
+    pickRouterModel([apiOnlyMini, unsupportedChatGptAccountModel, chatGptDefault])?.model,
+    "gpt-5.6-luna"
+  );
+  assert.equal(
+    normalizeRouteDecision(
+      { model: "gpt-5.4-mini", effort: "low", confidence: 0.99, reason: "简单任务" },
+      [apiOnlyMini, unsupportedChatGptAccountModel, chatGptDefault]
+    ).model,
+    "gpt-5.6-luna"
+  );
+});
+
+test("GPT-6 Astra remains manually available but is never selected automatically", () => {
+  const astra: CodexModelInfo = {
+    id: "gpt-6-astra",
+    model: "gpt-6-astra",
+    displayName: "GPT-6 Astra",
+    description: "highest quality",
+    hidden: false,
+    isDefault: true,
+    supportedReasoningEfforts: ["medium", "high"]
+  };
+  const candidates = [astra, ...models];
+
+  assert.equal(isCodexChatGptCompatibleModel(astra), true);
+  assert.equal(isAutoRoutableModel(astra), false);
+  assert.equal(pickRouterModel(candidates)?.model, "gpt-5.6-luna");
+  assert.equal(
+    normalizeRouteDecision(
+      { model: "gpt-6-astra", effort: "high", confidence: 0.99, reason: "复杂任务" },
+      candidates
+    ).model,
+    "gpt-5.6-sol"
+  );
+  assert.doesNotMatch(buildRouterPrompt("部署", "", [], candidates), /gpt-6-astra\[/);
 });
 
 test("reasoningEffortsFor supports app-server object entries", () => {

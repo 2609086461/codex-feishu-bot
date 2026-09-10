@@ -4,7 +4,7 @@
 
 这个仓库的主路径不是“用户自己看文档手点控制台”，而是：
 
-1. 用户打开 Codex，模型切到 `GPT-5.6-Sol`，推理强度设成 `xhigh`
+1. 用户打开 Codex，模型切到 `GPT-5.6-Luna`，推理强度设成 `xhigh`
 2. 用户把仓库地址贴给 Codex
 3. Codex 按本仓库的 `README.md`、`AGENTS.md` 和 `docs/` 自己完成环境准备、浏览器自动化和部署
 4. 用户只在必须的时候介入：登录 Feishu / OpenAI，或处理租户管理员审批

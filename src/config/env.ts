@@ -43,7 +43,7 @@ const envSchema = z.object({
   CODEX_APP_SERVER_ARGS: z.string().default("app-server"),
   CODEX_APP_SERVER_LISTEN_URL: z.string().url().default("ws://127.0.0.1:4500"),
   CODEX_APP_SERVER_MANAGED: envBoolean(true),
-  CODEX_APP_SERVER_MODEL: z.string().default("gpt-5.6-sol"),
+  CODEX_APP_SERVER_MODEL: z.string().default("gpt-5.6-luna"),
   CODEX_APP_SERVER_APPROVAL_POLICY: z
     .enum(["untrusted", "on-failure", "on-request", "never"])
     .default("never"),

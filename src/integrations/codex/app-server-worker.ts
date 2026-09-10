@@ -16,9 +16,10 @@ import { AppServerWsConnection } from "./app-server-ws-connection.js";
 import type { CodexTurnContext, CodexWorker } from "./codex-worker.js";
 import {
   buildRouterPrompt,
-  isAutoRouteEligible,
+  isCodexChatGptCompatibleModel,
   normalizeRouteDecision,
-  pickRouterModel
+  pickRouterModel,
+  SAFE_CODEX_CHATGPT_MODEL
 } from "./model-router.js";
 
 interface LoggerLike {
@@ -290,7 +291,7 @@ export class CodexAppServerWorker implements CodexWorker {
   ) {}
 
   getDefaultModel(): string {
-    return this.env.CODEX_APP_SERVER_MODEL;
+    return this.safeModel(this.env.CODEX_APP_SERVER_MODEL);
   }
 
   async listModels(): Promise<CodexModelInfo[]> {
@@ -312,24 +313,26 @@ export class CodexAppServerWorker implements CodexWorker {
         cursor = response.nextCursor;
       } while (cursor);
 
-      if (!models.some((model) => model.model === this.env.CODEX_APP_SERVER_MODEL)) {
-        models.push({
-          id: this.env.CODEX_APP_SERVER_MODEL,
-          model: this.env.CODEX_APP_SERVER_MODEL,
-          displayName: this.env.CODEX_APP_SERVER_MODEL,
+      const compatibleModels = models.filter(isCodexChatGptCompatibleModel);
+      const defaultModel = this.getDefaultModel();
+      if (!compatibleModels.some((model) => model.model === defaultModel)) {
+        compatibleModels.push({
+          id: defaultModel,
+          model: defaultModel,
+          displayName: defaultModel,
           description: "服务器当前默认模型",
           hidden: false,
           isDefault: false
         });
       }
-      return models;
+      return compatibleModels;
     } finally {
       await connection.close();
     }
   }
 
   async routeTurn(context: CodexTurnContext): Promise<CodexRouteDecision> {
-    const models = (await this.listModels()).filter(isAutoRouteEligible);
+    const models = await this.listModels();
     const routerModel = pickRouterModel(models);
     const fallback = normalizeRouteDecision({}, models);
     if (!routerModel) {
@@ -1571,7 +1574,19 @@ export class CodexAppServerWorker implements CodexWorker {
   }
 
   private modelFor(context: CodexTurnContext): string {
-    return context.session?.model ?? this.env.CODEX_APP_SERVER_MODEL;
+    return this.safeModel(context.session?.model ?? this.env.CODEX_APP_SERVER_MODEL);
+  }
+
+  private safeModel(model: string): string {
+    const candidate: CodexModelInfo = {
+      id: model,
+      model,
+      displayName: model,
+      description: "",
+      hidden: false,
+      isDefault: false
+    };
+    return isCodexChatGptCompatibleModel(candidate) ? model : SAFE_CODEX_CHATGPT_MODEL;
   }
 
   private async readRoutingContext(
