@@ -16,6 +16,7 @@ import { reasoningEffortsFor } from "../integrations/codex/model-router.js";
 import {
   renderEffortSelectionCard,
   renderModelSelectionCard,
+  renderProjectCreationPromptCard,
   renderProjectSelectionCard,
   renderSelectionConfirmedCard,
   renderTaskCreationPromptCard,
@@ -95,12 +96,35 @@ export class ChatOrchestrator {
     }
 
     const existingSession = this.sessionStore.get(message.chatId);
-    if (this.isInterruptCommand(message.text) && !existingSession?.pendingTaskCreation) {
+    if (
+      this.isInterruptCommand(message.text) &&
+      !existingSession?.pendingTaskCreation &&
+      !existingSession?.pendingProjectCreation
+    ) {
       void this.interruptActiveTurn(existingSession, message);
       return;
     }
     const directWorkspaceCommand = parseWorkspaceCommand(message.text);
     const directSettingsCommand = parseChatSettingsCommand(message.text);
+    if (existingSession?.pendingProjectCreation) {
+      const pending = existingSession.pendingProjectCreation;
+      if (!this.hasFreshPendingProjectCreation(existingSession)) {
+        this.clearPendingProjectCreation(message.chatId);
+        if (!directWorkspaceCommand && !directSettingsCommand) {
+          void this.deliveryService.sendText(
+            message.chatId,
+            "新建项目请求已过期。请重新发送“项目”并点击“＋新建项目”。"
+          );
+          return;
+        }
+      } else if (message.senderId === pending.operatorOpenId) {
+        if (!directWorkspaceCommand && !directSettingsCommand) {
+          void this.handlePendingProjectCreation(message, existingSession, pending);
+          return;
+        }
+        this.clearPendingProjectCreation(message.chatId);
+      }
+    }
     if (existingSession?.pendingTaskCreation) {
       const pending = existingSession.pendingTaskCreation;
       if (!this.hasFreshPendingTaskCreation(existingSession)) {
@@ -273,6 +297,22 @@ export class ChatOrchestrator {
       return true;
     }
 
+    if (kind === "project_create_prompt") {
+      if (!session || session.activeRunId) {
+        return false;
+      }
+      this.sessionStore.update(action.chatId, {
+        pendingNavigation: undefined,
+        pendingTaskCreation: undefined,
+        pendingProjectCreation: {
+          operatorOpenId: action.operatorOpenId,
+          createdAt: new Date().toISOString()
+        }
+      });
+      void this.applyProjectCreationPrompt(action);
+      return true;
+    }
+
     if (kind === "task_select") {
       const taskId = typeof action.value.taskId === "string" ? action.value.taskId : "";
       const project = session ? this.activeProject(session) : undefined;
@@ -299,6 +339,7 @@ export class ChatOrchestrator {
       }
       this.sessionStore.update(action.chatId, {
         pendingNavigation: undefined,
+        pendingProjectCreation: undefined,
         pendingTaskCreation: {
           projectId: project.id,
           operatorOpenId: action.operatorOpenId,
@@ -353,6 +394,17 @@ export class ChatOrchestrator {
       : Number.NaN;
     return Boolean(
       session.pendingTaskCreation &&
+        Number.isFinite(createdAt) &&
+        Date.now() - createdAt <= 10 * 60 * 1000
+    );
+  }
+
+  private hasFreshPendingProjectCreation(session: ChatSession): boolean {
+    const createdAt = session.pendingProjectCreation?.createdAt
+      ? Date.parse(session.pendingProjectCreation.createdAt)
+      : Number.NaN;
+    return Boolean(
+      session.pendingProjectCreation &&
         Number.isFinite(createdAt) &&
         Date.now() - createdAt <= 10 * 60 * 1000
     );
@@ -541,6 +593,97 @@ export class ChatOrchestrator {
     } catch (error) {
       this.clearPendingTaskCreation(action.chatId);
       await this.reportCardActionFailure(action, error);
+    }
+  }
+
+  private async applyProjectCreationPrompt(action: IncomingCardAction): Promise<void> {
+    try {
+      await this.updateCardOrSendText(
+        action,
+        renderProjectCreationPromptCard(),
+        "请发送：项目名称 Git仓库地址 [分支]。例如：简历 git@github.com:me/resume.git main。10 分钟内有效；发送“取消”可退出。"
+      );
+    } catch (error) {
+      this.clearPendingProjectCreation(action.chatId);
+      await this.reportCardActionFailure(action, error);
+    }
+  }
+
+  private async handlePendingProjectCreation(
+    message: IncomingChatMessage,
+    session: ChatSession,
+    _pending: NonNullable<ChatSession["pendingProjectCreation"]>
+  ): Promise<void> {
+    const input = message.text.trim();
+    if (/^(?:取消|cancel)$/i.test(input)) {
+      this.clearPendingProjectCreation(message.chatId);
+      await this.deliveryService.sendText(message.chatId, "已取消新建项目。");
+      return;
+    }
+    if (session.activeRunId) {
+      this.clearPendingProjectCreation(message.chatId);
+      await this.deliveryService.sendText(message.chatId, "当前任务仍在执行，无法新建项目。");
+      return;
+    }
+
+    const values = input.split(/\s+/);
+    if (values.length < 2 || values.length > 3) {
+      await this.deliveryService.sendText(
+        message.chatId,
+        "格式不正确。请发送：项目名称 Git仓库地址 [分支]；或发送“取消”。"
+      );
+      return;
+    }
+
+    try {
+      const [rawName, rawRemoteUrl, rawBranch] = values;
+      const name = this.validateName(rawName ?? "", "项目", 40);
+      if ((session.projects ?? []).some((project) => project.name === name)) {
+        await this.deliveryService.sendText(
+          message.chatId,
+          "已经存在同名项目，请换一个名称，或发送“取消”。"
+        );
+        return;
+      }
+      const remoteUrl = this.gitProjectService.validateRemoteUrl(rawRemoteUrl ?? "");
+      const requestedBranch = this.gitProjectService.validateBranch(rawBranch);
+      const now = new Date().toISOString();
+      const projectId = randomUUID();
+      const workspaceId = join(this.defaultWorkspace, "repos", projectId);
+      const result = await this.gitProjectService.clone(remoteUrl, workspaceId, requestedBranch);
+      const task = this.createTask(message.chatId, "默认任务", now);
+      const project: ChatProject = {
+        id: projectId,
+        name,
+        workspaceId,
+        git: {
+          remoteUrl,
+          branch: result.branch,
+          lastCommit: result.commit,
+          lastSyncedAt: now
+        },
+        tasks: [task],
+        activeTaskId: task.id,
+        createdAt: now,
+        updatedAt: now
+      };
+      this.sessionStore.update(message.chatId, {
+        projects: [...(session.projects ?? []), project],
+        activeProjectId: project.id,
+        workspaceId: project.workspaceId,
+        threadId: task.threadId,
+        pendingNavigation: undefined,
+        pendingModelOptions: undefined,
+        pendingModelSelectionAt: undefined,
+        pendingProjectCreation: undefined
+      });
+      await this.deliveryService.sendText(
+        message.chatId,
+        `已新建并切换到项目“${name}”，分支 ${result.branch}，版本 ${result.commit.slice(0, 8)}。`
+      );
+    } catch (error) {
+      const errorText = error instanceof Error ? error.message : String(error);
+      await this.deliveryService.sendText(message.chatId, `新建项目失败：${errorText}`);
     }
   }
 
@@ -1163,6 +1306,12 @@ export class ChatOrchestrator {
   private clearPendingTaskCreation(chatId: string): void {
     this.sessionStore.update(chatId, {
       pendingTaskCreation: undefined
+    });
+  }
+
+  private clearPendingProjectCreation(chatId: string): void {
+    this.sessionStore.update(chatId, {
+      pendingProjectCreation: undefined
     });
   }
 

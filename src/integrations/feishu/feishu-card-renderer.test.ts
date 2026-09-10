@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { ConversationItem } from "../../domain/types.js";
 import {
+  renderProjectCreationPromptCard,
   renderAssistantCardContent,
   renderEffortSelectionCard,
   renderModelSelectionCard,
@@ -207,6 +208,13 @@ test("project and task selection cards carry stable ids instead of list indexes"
     kind: "project_select",
     projectId: "project-1"
   });
+  assert.deepEqual(projectCard.elements[2].actions[0].value, {
+    kind: "project_create_prompt"
+  });
+
+  const projectCreatePrompt = JSON.parse(renderProjectCreationPromptCard());
+  assert.equal(projectCreatePrompt.header.title.content, "新建项目");
+  assert.match(projectCreatePrompt.elements[0].text.content, /Git仓库地址/);
 
   const taskCard = JSON.parse(renderTaskSelectionCard({
     projectName: "机器人",

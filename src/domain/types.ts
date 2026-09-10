@@ -87,6 +87,10 @@ export interface ChatSession {
     operatorOpenId: string;
     createdAt: string;
   };
+  pendingProjectCreation?: {
+    operatorOpenId: string;
+    createdAt: string;
+  };
   model?: string;
   modelDisplayName?: string;
   pendingModelOptions?: Array<{

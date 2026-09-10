@@ -1108,6 +1108,109 @@ test("ChatOrchestrator creates a task after the task-card prompt", async () => {
   assert.match(replies.at(-1) ?? "", /新建任务请求已过期/);
 });
 
+test("ChatOrchestrator binds a Git project after the project-card prompt", async () => {
+  const now = new Date().toISOString();
+  const sessionStore = new SessionStore();
+  const runStore = new RunStore();
+  const conversationStore = new ConversationStore();
+  const projector = new MessageProjector(runStore, conversationStore);
+  sessionStore.save({
+    chatId: "oc_group_1",
+    threadId: "thread_original",
+    workspaceId: "/workspace",
+    projects: [],
+    updatedAt: now
+  });
+  const replies: string[] = [];
+  const updatedCards: string[] = [];
+  let cloned: { remoteUrl: string; workspaceId: string; branch?: string } | undefined;
+  const gitProjectService: GitProjectServiceLike = {
+    validateRemoteUrl(remoteUrl) {
+      return remoteUrl;
+    },
+    validateBranch(branch) {
+      return branch;
+    },
+    async clone(remoteUrl, workspaceId, branch) {
+      cloned = { remoteUrl, workspaceId, branch };
+      return { branch: branch ?? "main", commit: "1234567890abcdef", changed: true };
+    },
+    async sync() {
+      throw new Error("not used");
+    }
+  };
+  const orchestrator = new ChatOrchestrator(
+    sessionStore,
+    runStore,
+    conversationStore,
+    {
+      async sendText(_chatId: string, content: string) {
+        replies.push(content);
+        return "om_text";
+      },
+      async updateCard(_messageId: string, content: string) {
+        updatedCards.push(content);
+      },
+      schedule() {
+        return undefined;
+      },
+      async flushRun() {
+        return undefined;
+      }
+    } as never,
+    projector,
+    {
+      async ensureThread() {
+        return "thread_unused";
+      },
+      async *runTurn(): AsyncGenerator<CodexEvent> {
+        return;
+      }
+    },
+    "/workspace",
+    createLogger(),
+    gitProjectService
+  );
+
+  assert.equal(orchestrator.enqueueCardAction({
+    chatId: "oc_group_1",
+    messageId: "om_project_menu",
+    operatorOpenId: "ou_user_1",
+    value: { kind: "project_create_prompt" },
+    raw: {}
+  }), true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(sessionStore.get("oc_group_1")?.pendingProjectCreation);
+  assert.match(updatedCards[0] ?? "", /Git仓库地址/);
+
+  orchestrator.enqueue(createMessage({
+    messageId: "om_project_details",
+    text: "简历 git@github.com:cai/resume.git main"
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(cloned?.remoteUrl, "git@github.com:cai/resume.git");
+  assert.equal(cloned?.branch, "main");
+  const project = sessionStore.get("oc_group_1")?.projects?.[0];
+  assert.equal(project?.name, "简历");
+  assert.equal(project?.git?.branch, "main");
+  assert.equal(project?.tasks[0]?.name, "默认任务");
+  assert.equal(sessionStore.get("oc_group_1")?.pendingProjectCreation, undefined);
+  assert.match(replies.at(-1) ?? "", /已新建并切换到项目“简历”/);
+
+  assert.equal(orchestrator.enqueueCardAction({
+    chatId: "oc_group_1",
+    messageId: "om_project_menu_again",
+    operatorOpenId: "ou_user_1",
+    value: { kind: "project_create_prompt" },
+    raw: {}
+  }), true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  orchestrator.enqueue(createMessage({ messageId: "om_project_cancel", text: "取消" }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(sessionStore.get("oc_group_1")?.pendingProjectCreation, undefined);
+  assert.match(replies.at(-1) ?? "", /已取消新建项目/);
+});
+
 test("ChatOrchestrator starts a pending task in runTurn without precreating a thread", async () => {
   const sessionStore = new SessionStore();
   const runStore = new RunStore();

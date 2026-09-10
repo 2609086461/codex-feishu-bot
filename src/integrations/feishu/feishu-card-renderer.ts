@@ -417,7 +417,33 @@ export function renderProjectSelectionCard(input: {
           project.current ? "primary" : "default"
         )
       )),
-      legacyMarkdown("卡片 10 分钟内有效；也可以回复原来的序号。")
+      ...actionRows([
+        cardButton("＋新建项目", { kind: "project_create_prompt" }, "primary")
+      ]),
+      legacyMarkdown("卡片 10 分钟内有效；也可以回复原来的序号。新建项目需要提供 Git 仓库地址。")
+    ]
+  };
+  return JSON.stringify(card);
+}
+
+export function renderProjectCreationPromptCard(): string {
+  const card: LegacyInteractiveCard = {
+    config: {
+      wide_screen_mode: true,
+      enable_forward: false,
+      update_multi: true
+    },
+    header: {
+      template: "orange",
+      title: {
+        tag: "plain_text",
+        content: "新建项目"
+      }
+    },
+    elements: [
+      legacyMarkdown(
+        "请发送：**项目名称 Git仓库地址 [分支]**\\n\\n例如：`简历 git@github.com:me/resume.git main`\\n\\n10 分钟内有效；发送“取消”可退出。"
+      )
     ]
   };
   return JSON.stringify(card);
