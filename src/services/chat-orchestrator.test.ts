@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { rm } from "node:fs/promises";
 import test from "node:test";
 
 import type { CodexEvent, ConversationItem, IncomingChatMessage } from "../domain/types.js";
@@ -1108,7 +1109,7 @@ test("ChatOrchestrator creates a task after the task-card prompt", async () => {
   assert.match(replies.at(-1) ?? "", /新建任务请求已过期/);
 });
 
-test("ChatOrchestrator binds a Git project after the project-card prompt", async () => {
+test("ChatOrchestrator creates an independent project after the project-card prompt", async () => {
   const now = new Date().toISOString();
   const sessionStore = new SessionStore();
   const runStore = new RunStore();
@@ -1123,22 +1124,11 @@ test("ChatOrchestrator binds a Git project after the project-card prompt", async
   });
   const replies: string[] = [];
   const updatedCards: string[] = [];
-  let cloned: { remoteUrl: string; workspaceId: string; branch?: string } | undefined;
-  const gitProjectService: GitProjectServiceLike = {
-    validateRemoteUrl(remoteUrl) {
-      return remoteUrl;
-    },
-    validateBranch(branch) {
-      return branch;
-    },
-    async clone(remoteUrl, workspaceId, branch) {
-      cloned = { remoteUrl, workspaceId, branch };
-      return { branch: branch ?? "main", commit: "1234567890abcdef", changed: true };
-    },
-    async sync() {
-      throw new Error("not used");
-    }
-  };
+  const root = "/tmp/codex-feishu-bot-project-card-test";
+  let resolveReply: (() => void) | undefined;
+  const waitForReply = () => new Promise<void>((resolve) => {
+    resolveReply = resolve;
+  });
   const orchestrator = new ChatOrchestrator(
     sessionStore,
     runStore,
@@ -1146,6 +1136,8 @@ test("ChatOrchestrator binds a Git project after the project-card prompt", async
     {
       async sendText(_chatId: string, content: string) {
         replies.push(content);
+        resolveReply?.();
+        resolveReply = undefined;
         return "om_text";
       },
       async updateCard(_messageId: string, content: string) {
@@ -1167,9 +1159,8 @@ test("ChatOrchestrator binds a Git project after the project-card prompt", async
         return;
       }
     },
-    "/workspace",
-    createLogger(),
-    gitProjectService
+    root,
+    createLogger()
   );
 
   assert.equal(orchestrator.enqueueCardAction({
@@ -1181,21 +1172,21 @@ test("ChatOrchestrator binds a Git project after the project-card prompt", async
   }), true);
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.ok(sessionStore.get("oc_group_1")?.pendingProjectCreation);
-  assert.match(updatedCards[0] ?? "", /Git仓库地址/);
+  assert.match(updatedCards[0] ?? "", /发送项目名称/);
 
+  const created = waitForReply();
   orchestrator.enqueue(createMessage({
     messageId: "om_project_details",
-    text: "简历 git@github.com:cai/resume.git main"
+    text: "简历项目"
   }));
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(cloned?.remoteUrl, "git@github.com:cai/resume.git");
-  assert.equal(cloned?.branch, "main");
+  await created;
   const project = sessionStore.get("oc_group_1")?.projects?.[0];
-  assert.equal(project?.name, "简历");
-  assert.equal(project?.git?.branch, "main");
+  assert.equal(project?.name, "简历项目");
+  assert.equal(project?.git, undefined);
+  assert.match(project?.workspaceId ?? "", /^\/tmp\/codex-feishu-bot-project-card-test\/projects\//);
   assert.equal(project?.tasks[0]?.name, "默认任务");
   assert.equal(sessionStore.get("oc_group_1")?.pendingProjectCreation, undefined);
-  assert.match(replies.at(-1) ?? "", /已新建并切换到项目“简历”/);
+  assert.match(replies.at(-1) ?? "", /已新建并切换到项目“简历项目”/);
 
   assert.equal(orchestrator.enqueueCardAction({
     chatId: "oc_group_1",
@@ -1205,10 +1196,12 @@ test("ChatOrchestrator binds a Git project after the project-card prompt", async
     raw: {}
   }), true);
   await new Promise((resolve) => setTimeout(resolve, 0));
+  const cancelled = waitForReply();
   orchestrator.enqueue(createMessage({ messageId: "om_project_cancel", text: "取消" }));
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await cancelled;
   assert.equal(sessionStore.get("oc_group_1")?.pendingProjectCreation, undefined);
   assert.match(replies.at(-1) ?? "", /已取消新建项目/);
+  await rm(root, { recursive: true, force: true });
 });
 
 test("ChatOrchestrator starts a pending task in runTurn without precreating a thread", async () => {

@@ -214,7 +214,7 @@ test("project and task selection cards carry stable ids instead of list indexes"
 
   const projectCreatePrompt = JSON.parse(renderProjectCreationPromptCard());
   assert.equal(projectCreatePrompt.header.title.content, "新建项目");
-  assert.match(projectCreatePrompt.elements[0].text.content, /Git仓库地址/);
+  assert.match(projectCreatePrompt.elements[0].text.content, /发送项目名称/);
 
   const taskCard = JSON.parse(renderTaskSelectionCard({
     projectName: "机器人",

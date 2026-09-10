@@ -420,7 +420,7 @@ export function renderProjectSelectionCard(input: {
       ...actionRows([
         cardButton("＋新建项目", { kind: "project_create_prompt" }, "primary")
       ]),
-      legacyMarkdown("卡片 10 分钟内有效；也可以回复原来的序号。新建项目需要提供 Git 仓库地址。")
+      legacyMarkdown("卡片 10 分钟内有效；也可以回复原来的序号。点击“＋新建项目”后直接发送项目名称。")
     ]
   };
   return JSON.stringify(card);
@@ -441,9 +441,7 @@ export function renderProjectCreationPromptCard(): string {
       }
     },
     elements: [
-      legacyMarkdown(
-        "请发送：**项目名称 Git仓库地址 [分支]**\\n\\n例如：`简历 git@github.com:me/resume.git main`\\n\\n10 分钟内有效；发送“取消”可退出。"
-      )
+      legacyMarkdown("请直接发送项目名称。\\n\\n10 分钟内有效；发送“取消”可退出。")
     ]
   };
   return JSON.stringify(card);

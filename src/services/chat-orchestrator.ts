@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import type {
@@ -601,7 +602,7 @@ export class ChatOrchestrator {
       await this.updateCardOrSendText(
         action,
         renderProjectCreationPromptCard(),
-        "请发送：项目名称 Git仓库地址 [分支]。例如：简历 git@github.com:me/resume.git main。10 分钟内有效；发送“取消”可退出。"
+        "请直接发送项目名称。10 分钟内有效；发送“取消”可退出。"
       );
     } catch (error) {
       this.clearPendingProjectCreation(action.chatId);
@@ -626,65 +627,53 @@ export class ChatOrchestrator {
       return;
     }
 
-    const values = input.split(/\s+/);
-    if (values.length < 2 || values.length > 3) {
-      await this.deliveryService.sendText(
-        message.chatId,
-        "格式不正确。请发送：项目名称 Git仓库地址 [分支]；或发送“取消”。"
-      );
-      return;
-    }
-
     try {
-      const [rawName, rawRemoteUrl, rawBranch] = values;
-      const name = this.validateName(rawName ?? "", "项目", 40);
-      if ((session.projects ?? []).some((project) => project.name === name)) {
-        await this.deliveryService.sendText(
-          message.chatId,
-          "已经存在同名项目，请换一个名称，或发送“取消”。"
-        );
-        return;
-      }
-      const remoteUrl = this.gitProjectService.validateRemoteUrl(rawRemoteUrl ?? "");
-      const requestedBranch = this.gitProjectService.validateBranch(rawBranch);
-      const now = new Date().toISOString();
-      const projectId = randomUUID();
-      const workspaceId = join(this.defaultWorkspace, "repos", projectId);
-      const result = await this.gitProjectService.clone(remoteUrl, workspaceId, requestedBranch);
-      const task = this.createTask(message.chatId, "默认任务", now);
-      const project: ChatProject = {
-        id: projectId,
-        name,
-        workspaceId,
-        git: {
-          remoteUrl,
-          branch: result.branch,
-          lastCommit: result.commit,
-          lastSyncedAt: now
-        },
-        tasks: [task],
-        activeTaskId: task.id,
-        createdAt: now,
-        updatedAt: now
-      };
-      this.sessionStore.update(message.chatId, {
-        projects: [...(session.projects ?? []), project],
-        activeProjectId: project.id,
-        workspaceId: project.workspaceId,
-        threadId: task.threadId,
-        pendingNavigation: undefined,
-        pendingModelOptions: undefined,
-        pendingModelSelectionAt: undefined,
-        pendingProjectCreation: undefined
-      });
+      const project = await this.createStandaloneProject(message.chatId, session, input);
+      this.clearPendingProjectCreation(message.chatId);
       await this.deliveryService.sendText(
         message.chatId,
-        `已新建并切换到项目“${name}”，分支 ${result.branch}，版本 ${result.commit.slice(0, 8)}。`
+        `已新建并切换到项目“${project.name}”，默认任务已就绪。`
       );
     } catch (error) {
       const errorText = error instanceof Error ? error.message : String(error);
       await this.deliveryService.sendText(message.chatId, `新建项目失败：${errorText}`);
     }
+  }
+
+  private async createStandaloneProject(
+    chatId: string,
+    session: ChatSession,
+    rawName: string
+  ): Promise<ChatProject> {
+    const name = this.validateName(rawName, "项目", 40);
+    if ((session.projects ?? []).some((project) => project.name === name)) {
+      throw new Error("已经存在同名项目，请换一个名称。");
+    }
+    const now = new Date().toISOString();
+    const projectId = randomUUID();
+    const workspaceId = join(this.defaultWorkspace, "projects", projectId);
+    await mkdir(workspaceId, { recursive: true });
+    const task = this.createTask(chatId, "默认任务", now);
+    const project: ChatProject = {
+      id: projectId,
+      name,
+      workspaceId,
+      tasks: [task],
+      activeTaskId: task.id,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.sessionStore.update(chatId, {
+      projects: [...(session.projects ?? []), project],
+      activeProjectId: project.id,
+      workspaceId: project.workspaceId,
+      threadId: task.threadId,
+      pendingNavigation: undefined,
+      pendingModelOptions: undefined,
+      pendingModelSelectionAt: undefined,
+      pendingProjectCreation: undefined
+    });
+    return project;
   }
 
   private async handlePendingTaskCreation(
@@ -1428,9 +1417,10 @@ export class ChatOrchestrator {
       }
 
       if (command.kind === "project_create") {
+        const project = await this.createStandaloneProject(message.chatId, session, command.value);
         await this.deliveryService.sendText(
           message.chatId,
-          "服务器不再创建独立空项目。请使用：绑定项目 <名称> <Git仓库地址> [分支]。"
+          `已新建并切换到项目“${project.name}”，默认任务已就绪。`
         );
         return;
       }
