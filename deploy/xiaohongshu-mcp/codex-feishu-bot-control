@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Root-only forced-command controller for the Codex Feishu bot host.
+#
+# This is deliberately a fixed command allow-list: the SSH key that invokes it
+# cannot run an arbitrary shell command or read the private environment file.
+set -euo pipefail
+
+ROOT="/opt/codex-feishu-bot"
+ENV_FILE="/etc/codex-feishu/.env.real"
+XHS_COMPOSE="$ROOT/deploy/xiaohongshu-mcp/docker-compose.yml"
+BOT_PROJECT="codex-feishu-bot-real"
+XHS_PROJECT="codex-feishu-xhs"
+ORIGINAL_COMMAND="${SSH_ORIGINAL_COMMAND:-}"
+
+need_root() {
+  [[ "${EUID}" -eq 0 ]] || { echo "controller must run as root" >&2; exit 1; }
+}
+
+need_root
+
+xhs_container_id() {
+  local id
+  id="$(docker compose --env-file "$ENV_FILE" -f "$XHS_COMPOSE" -p "$XHS_PROJECT" ps -q xiaohongshu-mcp)"
+  [[ -n "$id" ]] || { echo "Xiaohongshu MCP container is not running" >&2; exit 1; }
+  printf '%s' "$id"
+}
+
+# Calls a read-only XHS endpoint from the host via the private Docker network.
+# The bearer token never leaves this function or appears in controller output.
+xhs_read_api() {
+  local endpoint="$1" id token ip
+  id="$(xhs_container_id)"
+  token="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$id" | sed -n 's/^AUTH_TOKEN=//p' | head -n 1)"
+  ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$id")"
+  [[ -n "$token" && -n "$ip" ]] || { echo "Xiaohongshu MCP private connection is unavailable" >&2; exit 1; }
+  curl --fail --silent --show-error --max-time 75 \
+    -H "Authorization: Bearer $token" \
+    "http://$ip:18060$endpoint"
+}
+
+case "$ORIGINAL_COMMAND" in
+  bot-status)
+    cd "$ROOT"
+    docker compose --env-file "$ENV_FILE" -p "$BOT_PROJECT" ps
+    ;;
+  bot-diff)
+    cd "$ROOT"
+    git status --short
+    git diff --stat
+    ;;
+  bot-logs)
+    docker logs --tail 150 codex-feishu-bot-real-app-1
+    ;;
+  bot-xhs-logs)
+    docker logs --tail 150 "$(xhs_container_id)"
+    ;;
+  bot-xhs-status)
+    xhs_read_api /api/v1/login/status
+    ;;
+  bot-xhs-qrcode)
+    # This endpoint only reports login state or returns a short-lived QR image.
+    # It cannot publish, like, comment, follow, delete cookies, or expose tokens.
+    xhs_read_api /api/v1/login/qrcode
+    ;;
+  bot-deploy-start)
+    cd "$ROOT"
+    [[ -z "$(git status --porcelain)" ]] || { echo "refusing deployment: working tree is not clean" >&2; exit 1; }
+    unit="codex-feishu-bot-deploy-$(date -u +%Y%m%d%H%M%S)"
+    systemd-run --unit="$unit" --collect --no-block \
+      /bin/bash -lc "set -euo pipefail; cd '$ROOT'; git pull --ff-only origin main; bash deploy/xiaohongshu-mcp/install-host.sh; bash scripts/self-deploy-host.sh"
+    printf '%s\n' "$unit"
+    ;;
+  bot-deploy-status\ *)
+    unit="${ORIGINAL_COMMAND#bot-deploy-status }"
+    [[ "$unit" =~ ^codex-feishu-bot-deploy-[0-9]{14}$ ]] || { echo "invalid deployment unit" >&2; exit 2; }
+    systemctl status --no-pager "$unit"
+    ;;
+  *)
+    echo "Allowed: bot-status, bot-diff, bot-logs, bot-xhs-logs, bot-xhs-status, bot-xhs-qrcode, bot-deploy-start, bot-deploy-status <unit>" >&2
+    exit 2
+    ;;
+esac

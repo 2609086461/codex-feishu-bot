@@ -8,6 +8,8 @@ ENV_FILE="${CODEX_BOT_HOST_ENV:-/etc/codex-feishu/.env.real}"
 NETWORK="${XHS_MCP_NETWORK:-codex-feishu-xhs}"
 DATA_DIR="${XHS_MCP_DATA_DIR:-/var/lib/codex-feishu/xiaohongshu-mcp/data}"
 IMAGES_DIR="${XHS_MCP_IMAGES_DIR:-/var/lib/codex-feishu/xiaohongshu-mcp/images}"
+CONTROLLER_SOURCE="$ROOT_DIR/deploy/xiaohongshu-mcp/codex-feishu-bot-control"
+CONTROLLER_TARGET="/usr/local/sbin/codex-feishu-bot-control"
 MARKER_START='# >>> codex-feishu-xhs >>>'
 MARKER_END='# <<< codex-feishu-xhs <<<'
 
@@ -17,6 +19,7 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 [[ -f "$ENV_FILE" ]] || { echo "missing bot env file: $ENV_FILE" >&2; exit 1; }
 command -v docker >/dev/null || { echo "docker is required" >&2; exit 1; }
+[[ -f "$CONTROLLER_SOURCE" ]] || { echo "missing host controller source: $CONTROLLER_SOURCE" >&2; exit 1; }
 
 mkdir -p "$DATA_DIR" "$IMAGES_DIR"
 chmod 700 "$DATA_DIR" "$IMAGES_DIR"
@@ -74,5 +77,10 @@ docker compose --env-file "$ENV_FILE" \
   -f "$ROOT_DIR/deploy/xiaohongshu-mcp/docker-compose.yml" \
   -p codex-feishu-xhs up -d
 
+# Keep the SSH forced-command controller in sync with the deployed source.
+# It is a fixed allow-list; this does not grant the deployment key a shell.
+install -o root -g root -m 700 "$CONTROLLER_SOURCE" "$CONTROLLER_TARGET"
+
 echo "Xiaohongshu MCP is running on private Docker network: $NETWORK"
+echo "Host controller installed with read-only XHS status and QR-code commands."
 echo "Now redeploy the bot once so it joins that network and loads the read-only MCP config."
