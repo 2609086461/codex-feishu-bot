@@ -987,6 +987,16 @@ test("ChatOrchestrator switches projects and tasks through cards", async () => {
     (project) => project.id === "project-b"
   );
   assert.equal(activeProject?.tasks.find((task) => task.id === "task-b2")?.name, "Codex机器人");
+
+  orchestrator.enqueue(createMessage({
+    messageId: "om_project_rename",
+    text: "项目改名 项目 B（已调整）"
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(
+    sessionStore.get("oc_group_1")?.projects?.find((project) => project.id === "project-b")?.name,
+    "项目 B（已调整）"
+  );
 });
 
 test("ChatOrchestrator creates a task after the task-card prompt", async () => {

@@ -1511,6 +1511,35 @@ export class ChatOrchestrator {
         return;
       }
 
+      if (command.kind === "project_rename") {
+        const project = this.activeProject(session);
+        if (!project) {
+          await this.deliveryService.sendText(message.chatId, "当前项目状态无效，无法重命名。");
+          return;
+        }
+        const name = this.validateName(command.value, "项目", 40);
+        if ((session.projects ?? []).some((item) => item.id !== project.id && item.name === name)) {
+          await this.deliveryService.sendText(message.chatId, "已经存在同名项目，请换一个名称。");
+          return;
+        }
+        const renamedProject: ChatProject = {
+          ...project,
+          name,
+          updatedAt: new Date().toISOString()
+        };
+        this.sessionStore.update(message.chatId, {
+          projects: (session.projects ?? []).map((item) =>
+            item.id === project.id ? renamedProject : item
+          ),
+          pendingNavigation: undefined
+        });
+        await this.deliveryService.sendText(
+          message.chatId,
+          `项目已从“${project.name}”重命名为“${name}”。`
+        );
+        return;
+      }
+
       if (command.kind === "project_select" ||
           (command.kind === "navigation_pick" && session.pendingNavigation?.kind === "project")) {
         const project = command.kind === "navigation_pick"

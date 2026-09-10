@@ -9,6 +9,10 @@ test("parseWorkspaceCommand parses project commands", () => {
     kind: "project_create",
     value: "秋招投递"
   });
+  assert.deepEqual(parseWorkspaceCommand("项目改名 秋招求职"), {
+    kind: "project_rename",
+    value: "秋招求职"
+  });
   assert.deepEqual(parseWorkspaceCommand("项目 秋招投递"), {
     kind: "project_select",
     value: "秋招投递"
