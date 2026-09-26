@@ -1,0 +1,12 @@
+[Unit]
+Description=Weekly Codex CLI stable update check
+
+[Timer]
+OnCalendar=Sun *-*-* 04:00:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=10m
+AccuracySec=1m
+Unit=codex-cli-update.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=Check for stable Codex CLI updates
+Wants=network-online.target
+After=network-online.target docker.service
+StartLimitIntervalSec=1h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+ExecStart=/opt/codex-feishu-bot/scripts/check-codex-cli-update-host.sh
+TimeoutStartSec=2min
+Restart=on-failure
+RestartSec=15min

@@ -204,6 +204,8 @@ pnpm docker:smoke
 
 该命令会把构建、容器重建和健康检查交给宿主机临时 systemd 单元。即使当前容器被替换，部署仍会继续执行。命令返回的 unit 名称可用于查询 `systemctl status` 和 `journalctl`。
 
+生产环境还可以安装[每周 Codex CLI 稳定版更新提醒](docs/codex-cli-updates.md)。它只在发现新版时发飞书提醒，是否升级仍由用户确认，不会自动更新或重启机器人。
+
 ## 本地开发
 
 本地代码开发仍可用：
