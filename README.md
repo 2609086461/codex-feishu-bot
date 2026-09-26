@@ -71,6 +71,7 @@ pnpm docker:smoke
 
 ## 关键文档
 
+- [AI_SETUP.md](AI_SETUP.md)：供 Codex、WorkBuddy 等编码代理直接执行的快速配置入口
 - [AGENTS.md](AGENTS.md)：给 Codex 的仓库级操作约束
 - [docs/codex-bootstrap-playbook.md](docs/codex-bootstrap-playbook.md)：Codex 的执行剧本
 - [docs/feishu-console-automation.md](docs/feishu-console-automation.md)：飞书开放平台需要达到的目标状态
