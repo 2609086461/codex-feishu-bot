@@ -71,6 +71,7 @@ pnpm docker:smoke
 
 ## 关键文档
 
+- [USER_GUIDE.md](USER_GUIDE.md)：给最终用户看的飞书聊天、项目、任务、模型和更新手册
 - [AI_SETUP.md](AI_SETUP.md)：供 Codex、WorkBuddy 等编码代理直接执行的快速配置入口
 - [AGENTS.md](AGENTS.md)：给 Codex 的仓库级操作约束
 - [UPDATES.md](UPDATES.md)：统一发布、独立配置和用户确认升级的策略
