@@ -1,7 +1,25 @@
-# AI 快速配置指南
+# Codex 飞书机器人：AI 配置与维护指南
 
 这份文档供 Codex、WorkBuddy 或具备终端与浏览器自动化能力的编码代理读取。
 目标是在不暴露凭据的前提下，完成一个独立的飞书 Codex 机器人部署。
+
+本项目只负责“飞书消息与 Codex 的对话桥接”，不包含秋招看板、邮箱同步或求职数据。
+
+## 实际运行机制
+
+```text
+飞书私聊/群聊
+  -> 飞书 WebSocket 长连接推送 im.message.receive_v1
+  -> Node 服务校验用户、解析消息和附件
+  -> 容器内托管的 codex app-server 启动或续接线程
+  -> Codex 在独立 /workspace 中使用终端和工具完成任务
+  -> Node 服务把进度卡片、最终答复和文件发回飞书
+```
+
+- 不要求公网回调地址；消息事件和卡片点击都走飞书长连接。
+- 每个聊天保存自己的线程、模型和工作区选择；运行状态持久化后可跨重启恢复。
+- 源码目录和 Codex 的 `/workspace` 分开，避免机器人修改自己的部署仓库。
+- “模型”菜单实时读取当前 Codex 账号可用模型，不维护固定模型白名单。
 
 ## 完成标准
 
@@ -80,3 +98,5 @@ docs/feishu-console-automation.md。只先问我是否创建新的飞书机器�
 - 云端机器人从容器内更新自己时，必须使用 `/usr/local/bin/self-deploy`，不要直接
   运行 `docker compose up` 替换当前容器。
 - 修改共享 TypeScript 后运行 `pnpm typecheck`、`pnpm test` 和 `pnpm build`。
+- 机器人源码通过本仓库的 GitHub Release 发布；发现新版只提醒，用户确认后才更新。
+- 机器人代码更新和 Codex CLI 更新是两条独立通道，均不得静默升级。
