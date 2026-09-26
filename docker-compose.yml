@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        CODEX_CLI_VERSION: ${CODEX_CLI_VERSION:-0.153.4}
+        CODEX_CLI_VERSION: ${CODEX_CLI_VERSION:-0.157.1}
     restart: unless-stopped
     init: true
     privileged: true
