@@ -19,7 +19,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        CODEX_CLI_VERSION: ${CODEX_CLI_VERSION:-0.111.0}
+        CODEX_CLI_VERSION: ${CODEX_CLI_VERSION:-0.157.1}
     depends_on:
       fake-feishu:
         condition: service_healthy
