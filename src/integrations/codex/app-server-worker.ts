@@ -16,10 +16,9 @@ import { AppServerWsConnection } from "./app-server-ws-connection.js";
 import type { CodexTurnContext, CodexWorker } from "./codex-worker.js";
 import {
   buildRouterPrompt,
-  isCodexChatGptCompatibleModel,
+  isLiveSelectableModel,
   normalizeRouteDecision,
-  pickRouterModel,
-  SAFE_CODEX_CHATGPT_MODEL
+  pickRouterModel
 } from "./model-router.js";
 
 interface LoggerLike {
@@ -291,7 +290,7 @@ export class CodexAppServerWorker implements CodexWorker {
   ) {}
 
   getDefaultModel(): string {
-    return this.safeModel(this.env.CODEX_APP_SERVER_MODEL);
+    return this.env.CODEX_APP_SERVER_MODEL;
   }
 
   async listModels(): Promise<CodexModelInfo[]> {
@@ -313,19 +312,10 @@ export class CodexAppServerWorker implements CodexWorker {
         cursor = response.nextCursor;
       } while (cursor);
 
-      const compatibleModels = models.filter(isCodexChatGptCompatibleModel);
-      const defaultModel = this.getDefaultModel();
-      if (!compatibleModels.some((model) => model.model === defaultModel)) {
-        compatibleModels.push({
-          id: defaultModel,
-          model: defaultModel,
-          displayName: defaultModel,
-          description: "服务器当前默认模型",
-          hidden: false,
-          isDefault: false
-        });
-      }
-      return compatibleModels;
+      // Do not add configured or historic fallbacks here.  The app server's
+      // live model list already reflects the signed-in ChatGPT account, and a
+      // synthetic entry could be shown to a user even though it cannot run.
+      return models.filter((model) => Boolean(model.model?.trim()));
     } finally {
       await connection.close();
     }
@@ -732,8 +722,8 @@ export class CodexAppServerWorker implements CodexWorker {
 
     const state: TurnStreamState = {
       currentThreadId: context.threadId,
-      selectedModel: this.modelFor(context),
-      selectedModelDisplay: context.session?.modelDisplayName ?? this.modelFor(context),
+      selectedModel: "",
+      selectedModelDisplay: "",
       reasoningEffort: context.session?.reasoningEffort ?? "medium",
       showReasoningSummary: context.session?.showReasoningSummary ?? false,
       commandByItemId: new Map(),
@@ -745,6 +735,10 @@ export class CodexAppServerWorker implements CodexWorker {
       reasoningTextByItemId: new Map(),
       reasoningSummaryIndexByItemId: new Map()
     };
+
+    const selectedModel = await this.modelFor(context);
+    state.selectedModel = selectedModel.model;
+    state.selectedModelDisplay = selectedModel.displayName;
 
     const queue = new AsyncEventQueue<CodexEvent>();
     let connection: AppServerWsConnection;
@@ -1573,20 +1567,27 @@ export class CodexAppServerWorker implements CodexWorker {
     }
   }
 
-  private modelFor(context: CodexTurnContext): string {
-    return this.safeModel(context.session?.model ?? this.env.CODEX_APP_SERVER_MODEL);
-  }
+  private async modelFor(context: CodexTurnContext): Promise<CodexModelInfo> {
+    const models = (await this.listModels()).filter(isLiveSelectableModel);
+    const requested = context.session?.model ?? this.getDefaultModel();
+    const selected = models.find((model) => model.model === requested);
+    if (selected) {
+      return selected;
+    }
 
-  private safeModel(model: string): string {
-    const candidate: CodexModelInfo = {
-      id: model,
-      model,
-      displayName: model,
-      description: "",
-      hidden: false,
-      isDefault: false
-    };
-    return isCodexChatGptCompatibleModel(candidate) ? model : SAFE_CODEX_CHATGPT_MODEL;
+    const fallback = models.find((model) => model.isDefault) ?? models[0];
+    if (!fallback) {
+      throw new Error("当前 ChatGPT 账号没有可用的 Codex 模型。");
+    }
+    this.logger?.warn(
+      {
+        requestedModel: requested,
+        fallbackModel: fallback.model,
+        chatId: context.message.chatId
+      },
+      "已选择的 Codex 模型不再可用，改用当前账号默认模型"
+    );
+    return fallback;
   }
 
   private async readRoutingContext(
