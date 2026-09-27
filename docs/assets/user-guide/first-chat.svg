@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="950" height="390" viewBox="0 0 950 390">
-  <rect width="950" height="390" rx="20" fill="#eef3fb"/><text x="30" y="39" font-size="22" font-family="sans-serif" font-weight="700" fill="#183153">图 3｜首次验收对话（飞书界面示意，非真实截图）</text>
+  <rect width="950" height="390" rx="20" fill="#eef3fb"/><text x="30" y="39" font-size="22" font-family="sans-serif" font-weight="700" fill="#183153">首次私聊验收（界面示意，非真实截图）</text>
   <rect x="235" y="68" width="680" height="286" rx="20" fill="#fff" stroke="#cbd7e8"/><text x="262" y="105" font-size="19" font-family="sans-serif" font-weight="700" fill="#183153">Codex 机器人</text>
   <rect x="410" y="125" width="475" height="72" rx="15" fill="#dceaff"/><text x="431" y="155" font-size="17" font-family="sans-serif" fill="#183153">你好。请告诉我当前项目和模型，</text><text x="431" y="180" font-size="17" font-family="sans-serif" fill="#183153">先不要修改文件。</text>
   <rect x="263" y="211" width="490" height="101" rx="15" fill="#e5f7ef"/><text x="284" y="247" font-size="18" font-family="sans-serif" fill="#183153">已连接 ✓　当前：临时工作区</text><text x="284" y="277" font-size="17" font-family="sans-serif" fill="#47617d">下一步：发送“项目”查看可用项目</text>

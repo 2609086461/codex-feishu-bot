@@ -1,10 +1,12 @@
 # Codex Feishu Bot
 
-把 `codex app-server` 接到飞书群聊，并把“创建飞书应用、开事件订阅、补权限、发布版本、Docker 部署”这整套流程尽量交给用户自己的 Codex 自动完成。
+把 `codex app-server` 接到飞书聊天。机器人可在 Windows 电脑本地运行，也可部署到 Linux 服务器；飞书应用的创建、权限与连接配置尽量交给用户自己的 Codex/WorkBuddy 完成。
+
+第一次使用请先读 [给普通用户的 Windows 优先手册](USER_GUIDE.md)。给编码助手执行的配置入口是 [AI_SETUP.md](AI_SETUP.md)：它会先区分 Windows 本地模式和云端 Docker 模式。下文“最短上手路径”描述的是云端 Docker 路径，不是 Windows 的安装步骤。
 
 这个仓库的主路径不是“用户自己看文档手点控制台”，而是：
 
-1. 用户打开 Codex，模型切到 `GPT-5.6-Luna`，推理强度设成 `xhigh`
+1. 用户打开自己可用的 Codex/WorkBuddy，选择实际可用的模型
 2. 用户把仓库地址贴给 Codex
 3. Codex 按本仓库的 `README.md`、`AGENTS.md` 和 `docs/` 自己完成环境准备、浏览器自动化和部署
 4. 用户只在必须的时候介入：登录 Feishu / OpenAI，或处理租户管理员审批

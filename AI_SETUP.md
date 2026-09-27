@@ -5,6 +5,22 @@
 
 本项目只负责“飞书消息与 Codex 的对话桥接”，不包含秋招看板、邮箱同步或求职数据。
 
+## 先判断运行位置
+
+用户在 Windows 电脑上使用 Codex/WorkBuddy、希望机器人也在这台电脑运行时，走下方的 **Windows 本地模式**。用户要把机器人放在 Linux 服务器，或明确选择 Docker 时，才走后面的 **云端 Docker 模式**。本地 Codex 帮用户操作服务器，不代表运行位置是本地；先确认最终运行位置。
+
+### Windows 本地模式
+
+先检查现有 Codex 登录、Node.js、pnpm、PowerShell 和飞书应用状态，按照 `AGENTS.md`、`docs/codex-bootstrap-playbook.md`、`docs/feishu-console-automation.md` 建立或复用用户指定的飞书应用。登录、扫码、审批留给用户；普通页面配置由代理处理。默认只允许用户私聊。
+
+本地服务使用 `scripts/configure-local-bot.ps1`、`scripts/start-local-bot.ps1`，可选 `scripts/install-local-bot-task.ps1` 实现 Windows 用户登录后自动启动。**不要直接照搬脚本现有配置**：`configure-local-bot.ps1` 里的 `DEFAULT_WORKSPACE` 目前带有维护者电脑的固定路径，必须先根据用户电脑上的真实目录修正，并确认 `CODEX_HOME_SOURCE`、Codex 可执行文件和允许用户 open ID 均正确。脚本加密保存飞书 App Secret；不得把明文写进仓库或对话。
+
+Windows 本地模式不需要 Docker，也不要执行下方的 `pnpm docker:*`。构建后用 Windows 启动脚本运行，检查本地服务健康；最终让用户从飞书私聊发普通消息和 `项目` 验收。若用户希望已有电脑端项目出现在列表里，要检查机器人能否访问原项目真实路径和 Codex 会话目录，不要只凭同一账号推断文件已共享。
+
+### 云端 Docker 模式
+
+以下完成标准、命令和 `.env.real` 说明适用于云端 Docker 模式，不应原样套到 Windows 本地模式。
+
 ## 实际运行机制
 
 ```text
@@ -43,7 +59,7 @@
 - 遇到登录、SSO、2FA、管理员审批或多个候选应用无法判断时暂停，让用户完成或选择；
   其他普通控制台配置继续由代理完成。
 
-## 需要先确认的一个问题
+## 需要先确认的一个问题（云端 Docker）
 
 只询问用户：是否创建新的飞书机器人？
 
@@ -52,7 +68,7 @@
 
 不要在这个问题之外重复询问可以从仓库、环境或飞书控制台自行确认的信息。
 
-## 执行顺序
+## 执行顺序（云端 Docker）
 
 在仓库根目录运行：
 
