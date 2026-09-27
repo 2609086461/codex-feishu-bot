@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1060" height="260" viewBox="0 0 1060 260">
   <rect width="1060" height="260" rx="20" fill="#f5f8ff"/>
-  <text x="32" y="39" font-size="22" font-family="sans-serif" font-weight="700" fill="#183153">一条飞书消息怎样变成工作（示意）</text>
+  <text x="32" y="39" font-size="22" font-family="sans-serif" font-weight="700" fill="#183153">图 1｜一条飞书消息怎样变成工作（示意）</text>
   <g font-family="sans-serif" text-anchor="middle">
     <rect x="35" y="82" width="200" height="106" rx="18" fill="#dceaff" stroke="#79aaff"/><text x="135" y="125" font-size="21" fill="#183153">你在飞书发消息</text><text x="135" y="158" font-size="15" fill="#47617d">文字 / 图片 / 文件</text>
     <rect x="296" y="82" width="200" height="106" rx="18" fill="#e5f7ef" stroke="#68c298"/><text x="396" y="125" font-size="21" fill="#183153">机器人接收</text><text x="396" y="158" font-size="15" fill="#47617d">校验授权与当前项目</text>

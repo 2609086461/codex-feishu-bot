@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="330" viewBox="0 0 1000 330">
-  <rect width="1000" height="330" rx="20" fill="#f5f8ff"/><text x="31" y="39" font-size="22" font-family="sans-serif" font-weight="700" fill="#183153">同一项目共享文件，不同任务保留各自的对话</text>
+  <rect width="1000" height="330" rx="20" fill="#f5f8ff"/><text x="31" y="39" font-size="22" font-family="sans-serif" font-weight="700" fill="#183153">图 3｜同一项目共享文件，不同任务保留各自的对话</text>
   <rect x="57" y="86" width="886" height="196" rx="18" fill="#eaf1ff" stroke="#86aaff"/><text x="87" y="124" font-size="23" font-family="sans-serif" font-weight="700" fill="#183153">项目：我的网站　📁 同一套代码 / 文档 / AGENTS.md</text>
   <rect x="86" y="156" width="382" height="91" rx="15" fill="#fff" stroke="#b4c3e4"/><text x="112" y="194" font-size="19" font-family="sans-serif" fill="#183153">任务 A：修复登录页</text><text x="112" y="221" font-size="15" font-family="sans-serif" fill="#617087">保留 A 的聊天上下文</text>
   <rect x="528" y="156" width="382" height="91" rx="15" fill="#fff" stroke="#b4c3e4"/><text x="554" y="194" font-size="19" font-family="sans-serif" fill="#183153">任务 B：编写部署说明</text><text x="554" y="221" font-size="15" font-family="sans-serif" fill="#617087">保留 B 的聊天上下文</text>
