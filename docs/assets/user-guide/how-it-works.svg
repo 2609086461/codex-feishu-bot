@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1060" height="260" viewBox="0 0 1060 260">
+  <rect width="1060" height="260" rx="20" fill="#f5f8ff"/>
+  <text x="32" y="39" font-size="22" font-family="sans-serif" font-weight="700" fill="#183153">图 1｜一条飞书消息如何变成任务（流程示意）</text>
+  <g font-family="sans-serif" text-anchor="middle">
+    <rect x="35" y="82" width="200" height="106" rx="18" fill="#dceaff" stroke="#79aaff"/><text x="135" y="125" font-size="21" fill="#183153">你在飞书发消息</text><text x="135" y="158" font-size="15" fill="#47617d">文字 / 图片 / 文件</text>
+    <rect x="296" y="82" width="200" height="106" rx="18" fill="#e5f7ef" stroke="#68c298"/><text x="396" y="125" font-size="21" fill="#183153">机器人接收</text><text x="396" y="158" font-size="15" fill="#47617d">校验授权与当前项目</text>
+    <rect x="557" y="82" width="200" height="106" rx="18" fill="#fff0d8" stroke="#e4b46d"/><text x="657" y="125" font-size="21" fill="#183153">运行机上的 Codex</text><text x="657" y="158" font-size="15" fill="#47617d">读写它能访问的文件</text>
+    <rect x="818" y="82" width="200" height="106" rx="18" fill="#e9e8ff" stroke="#a7a0ed"/><text x="918" y="125" font-size="21" fill="#183153">结果回到飞书</text><text x="918" y="158" font-size="15" fill="#47617d">文字 / 卡片 / 附件</text>
+  </g>
+  <path d="M241 135h44m218 0h43m218 0h43" stroke="#4f6b91" stroke-width="4" marker-end="url(#arrow)"/><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0l10 5-10 5z" fill="#4f6b91"/></marker></defs>
+  <text x="33" y="225" font-size="16" font-family="sans-serif" fill="#5a6880">关键：Codex 在“机器人运行机”执行，不会自动拥有你其他设备的文件。</text>
+</svg>
