@@ -4,6 +4,15 @@
 
 第一次使用请先读 [给普通用户的 Windows 优先手册](USER_GUIDE.md)。给编码助手执行的配置入口是 [AI_SETUP.md](AI_SETUP.md)：它会先区分 Windows 本地模式和云端 Docker 模式。下文“最短上手路径”描述的是云端 Docker 路径，不是 Windows 的安装步骤。
 
+Windows 本地模式在完成飞书应用创建并取得 App ID、本人 Open ID 后，可由 Codex 运行：
+
+```powershell
+& .\scripts\setup-local-bot.ps1 -AppId "cli_xxx" -AllowedOpenId "ou_xxx" -Workspace "D:\CodexWorkspace" -InstallAutoStart
+```
+
+脚本会安全提示输入 App Secret，不把它写进仓库。安装后可随时运行
+`scripts/doctor-local-bot.ps1 -RequireRunning` 检查依赖、配置、Codex 登录和服务健康。
+
 这个仓库的主路径不是“用户自己看文档手点控制台”，而是：
 
 1. 用户打开自己可用的 Codex/WorkBuddy，选择实际可用的模型
@@ -244,6 +253,8 @@ curl http://localhost:3400/fake/state
 - `.env.real`、本地 Chrome profile、`.codex-local/` 都不要提交到 GitHub
 - 用户可见导出文件默认会落到 `.codex-local/workspace/artifacts/`，这是预期行为，不是源码目录
 - 运行时用户可见的文件必须通过飞书 API 发布，工作空间文件默认只有 Codex 自己可见
+- 可选录音转写凭据通过 `SPEECH_SECRETS_HOST_PATH` 只读挂载；技能和转写脚本放在实际
+  业务项目中，机器人本身不保存面经业务数据。
 - 这套仓库默认不会为用户申请不存在的“飞书开发者平台管理 API”；平台配置路径是浏览器自动化
 - 对外只有单容器部署，不再提供双容器 sidecar 运行模式
 

@@ -27,7 +27,7 @@ services:
       CODEX_APP_SERVER_ARGS: app-server
       CODEX_APP_SERVER_MANAGED: "true"
       CODEX_APP_SERVER_LISTEN_URL: ws://127.0.0.1:4500
-      CODEX_APP_SERVER_MODEL: ${CODEX_APP_SERVER_MODEL:-gpt-5.6-luna}
+      CODEX_APP_SERVER_MODEL: ${CODEX_APP_SERVER_MODEL:-auto}
       CODEX_APP_SERVER_APPROVAL_POLICY: never
       CODEX_APP_SERVER_SANDBOX: danger-full-access
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -42,8 +42,9 @@ services:
       FEISHU_VERIFICATION_TOKEN: ${FEISHU_VERIFICATION_TOKEN:-}
       FEISHU_ALLOWED_OPEN_IDS: ${FEISHU_ALLOWED_OPEN_IDS:?set FEISHU_ALLOWED_OPEN_IDS}
       FEISHU_ALLOW_GROUP_MESSAGES: ${FEISHU_ALLOW_GROUP_MESSAGES:-false}
-      QQ_MAIL_ADDRESS: ${QQ_MAIL_ADDRESS:-2609086461@qq.com}
+      QQ_MAIL_ADDRESS: ${QQ_MAIL_ADDRESS:-your-account@qq.com}
       QQ_MAIL_AUTH_CODE_FILE: ${QQ_MAIL_AUTH_CODE_FILE:-/run/secrets/codex-mail/qq-imap-auth-code}
+      DOUBAO_SPEECH_CREDENTIALS_FILE: ${DOUBAO_SPEECH_CREDENTIALS_FILE:-/run/secrets/codex-speech/doubao-asr.env}
       # Optional, read-only Xiaohongshu MCP.  Keep it disabled until the
       # separate service and its private Docker network have been installed.
       XHS_MCP_ENABLED: ${XHS_MCP_ENABLED:-false}
@@ -56,6 +57,7 @@ services:
       - ${CODEX_HOME_SOURCE:-codex-home}:/root/.codex
       - ${GIT_SSH_HOST_PATH:-./.codex-local/ssh}:/root/.ssh:ro
       - ${MAIL_SECRETS_HOST_PATH:-./.codex-local/mail}:/run/secrets/codex-mail:ro
+      - ${SPEECH_SECRETS_HOST_PATH:-./.codex-local/speech}:/run/secrets/codex-speech:ro
       - /:/host:rw
     networks:
       - default

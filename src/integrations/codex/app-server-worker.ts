@@ -1579,6 +1579,9 @@ export class CodexAppServerWorker implements CodexWorker {
     if (!fallback) {
       throw new Error("当前 ChatGPT 账号没有可用的 Codex 模型。");
     }
+    if (requested.trim().toLowerCase() === "auto") {
+      return fallback;
+    }
     this.logger?.warn(
       {
         requestedModel: requested,

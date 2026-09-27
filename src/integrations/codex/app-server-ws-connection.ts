@@ -215,7 +215,7 @@ export class AppServerWsConnection {
       clientInfo: {
         name: "codex-feishu-bot",
         title: "Codex Feishu Bot",
-        version: "0.1.0"
+        version: "0.2.0"
       },
       capabilities: {
         experimentalApi: true

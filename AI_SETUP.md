@@ -13,7 +13,7 @@
 
 先检查现有 Codex 登录、Node.js、pnpm、PowerShell 和飞书应用状态，按照 `AGENTS.md`、`docs/codex-bootstrap-playbook.md`、`docs/feishu-console-automation.md` 建立或复用用户指定的飞书应用。登录、扫码、审批留给用户；普通页面配置由代理处理。默认只允许用户私聊。
 
-本地服务使用 `scripts/configure-local-bot.ps1`、`scripts/start-local-bot.ps1`，可选 `scripts/install-local-bot-task.ps1` 实现 Windows 用户登录后自动启动。**不要直接照搬脚本现有配置**：`configure-local-bot.ps1` 里的 `DEFAULT_WORKSPACE` 目前带有维护者电脑的固定路径，必须先根据用户电脑上的真实目录修正，并确认 `CODEX_HOME_SOURCE`、Codex 可执行文件和允许用户 open ID 均正确。脚本加密保存飞书 App Secret；不得把明文写进仓库或对话。
+本地服务优先使用 `scripts/setup-local-bot.ps1`：它安装依赖、运行测试、构建、写入配置、启动服务并执行自检。工作目录和 Codex Home 均由参数或当前 Windows 用户目录推导，不再包含维护者电脑路径。单独维护时可使用 `configure-local-bot.ps1`、`start-local-bot.ps1` 和 `doctor-local-bot.ps1`；可选 `install-local-bot-task.ps1` 实现 Windows 用户登录后自动启动。脚本加密保存飞书 App Secret；不得把明文写进仓库或对话。
 
 Windows 本地模式不需要 Docker，也不要执行下方的 `pnpm docker:*`。构建后用 Windows 启动脚本运行，检查本地服务健康；最终让用户从飞书私聊发普通消息和 `项目` 验收。若用户希望已有电脑端项目出现在列表里，要检查机器人能否访问原项目真实路径和 Codex 会话目录，不要只凭同一账号推断文件已共享。
 
