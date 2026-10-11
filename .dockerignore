@@ -3,5 +3,7 @@ dist
 .git
 .env
 .env.real
+.env.portable
 .codex-local
+.portable-data
 *.log

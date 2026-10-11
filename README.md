@@ -4,6 +4,8 @@
 
 第一次使用请先读 [给普通用户的 Windows 优先手册](USER_GUIDE.md)。给编码助手执行的配置入口是 [AI_SETUP.md](AI_SETUP.md)：它会先区分 Windows 本地模式和云端 Docker 模式。下文“最短上手路径”描述的是云端 Docker 路径，不是 Windows 的安装步骤。
 
+把已有机器人迁到另一台 Linux/Mac Docker 主机时，使用[便携 Docker 部署](docs/portable-docker.md)：源码通过 Git，同一目录下的 `.env.portable` 与 `.portable-data/` 通过私有通道迁移。该模式不改变现有生产 Compose。
+
 Windows 本地模式在完成飞书应用创建并取得 App ID、本人 Open ID 后，可由 Codex 运行：
 
 ```powershell

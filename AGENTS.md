@@ -10,6 +10,7 @@ Maintain one portable Feishu bridge implementation backed by `codex app-server`,
 
 - Windows local mode uses the PowerShell scripts under `scripts/`, Windows Task Scheduler, HTTP port `3100`, and Codex app-server port `4600`.
 - Cloud mode uses the single-container Docker deployment and persistent mounted runtime directories.
+- Portable Docker mode uses `docker-compose.portable.yml`, `.env.portable`, and `.portable-data/`; it deliberately has no host-root mount, privileged mode, host PID, or external MCP network. See `docs/portable-docker.md`.
 - Bootstrap mode is only for creating or reconfiguring a Feishu application. Follow `docs/codex-bootstrap-playbook.md` and `docs/feishu-console-automation.md` only for that task.
 - Do not rerun dependency installation, browser setup, Git status, or deployment checks for ordinary chat handling unless the current task requires them.
 

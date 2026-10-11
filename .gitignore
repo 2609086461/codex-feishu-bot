@@ -2,8 +2,10 @@ node_modules
 dist
 .env
 .env.real
+.env.portable
 .env.local
 .idea
 .DS_Store
 .codex-local
 .codex-local-windows
+.portable-data
