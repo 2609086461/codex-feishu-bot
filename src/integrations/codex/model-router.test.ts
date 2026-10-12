@@ -75,7 +75,7 @@ test("the live app-server model list is authoritative over static model-name rul
   );
 });
 
-test("GPT-6 Astra remains manually available but is never selected automatically", () => {
+test("GPT-6 Astra is available to automatic routing when the account exposes it", () => {
   const astra: CodexModelInfo = {
     id: "gpt-6-astra",
     model: "gpt-6-astra",
@@ -88,16 +88,16 @@ test("GPT-6 Astra remains manually available but is never selected automatically
   const candidates = [astra, ...models];
 
   assert.equal(isLiveSelectableModel(astra), true);
-  assert.equal(isAutoRoutableModel(astra), false);
+  assert.equal(isAutoRoutableModel(astra), true);
   assert.equal(pickRouterModel(candidates)?.model, "gpt-5.6-luna");
   assert.equal(
     normalizeRouteDecision(
       { model: "gpt-6-astra", effort: "high", confidence: 0.99, reason: "复杂任务" },
       candidates
     ).model,
-    "gpt-5.6-sol"
+    "gpt-6-astra"
   );
-  assert.doesNotMatch(buildRouterPrompt("部署", "", [], candidates), /gpt-6-astra\[/);
+  assert.match(buildRouterPrompt("部署", "", [], candidates), /gpt-6-astra\[/);
 });
 
 test("reasoningEffortsFor supports app-server object entries", () => {
@@ -129,9 +129,9 @@ test("normalizeRouteDecision falls back to Sol when confidence is low", () => {
   assert.equal(decision.reasoningEffort, "medium");
 });
 
-test("legacy GPT-6 exclusions are exact and do not prevent future model discovery", () => {
+test("all live model versions remain available to automatic routing", () => {
   for (const name of ["gpt-6", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]) {
-    assert.equal(isAutoRoutableModel({ ...models[1]!, model: name }), false);
+    assert.equal(isAutoRoutableModel({ ...models[1]!, model: name }), true);
   }
   for (const name of ["gpt-6.1-sol", "gpt-7.2-sol"]) {
     assert.equal(isAutoRoutableModel({ ...models[1]!, model: name, displayName: "Near-Astra quality" }), true);

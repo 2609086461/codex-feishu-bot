@@ -25,12 +25,8 @@ export function isLiveSelectableModel(model: CodexModelInfo): boolean {
   return Boolean(model.model.trim()) && !model.hidden;
 }
 
-// Explicit user exclusions apply to these exact legacy IDs, never a version prefix.
-const EXCLUDED_AUTO_MODELS = new Set(["gpt-6", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]);
-
 export function isAutoRoutableModel(model: CodexModelInfo): boolean {
-  return isLiveSelectableModel(model) &&
-    !EXCLUDED_AUTO_MODELS.has(model.model.toLowerCase());
+  return isLiveSelectableModel(model);
 }
 
 function isReasoningEffort(value: unknown): value is ReasoningEffort {
@@ -144,7 +140,7 @@ export function buildRouterPrompt(
     "简单问答、提取、格式整理优先轻量候选/low；一般分析和小修改用平衡候选/low或medium；多步骤编码、排障、部署、科研和重要文档优先能力更强的候选/medium或high。仅明显困难的任务使用xhigh/max/ultra。",
     "费率来自官方Codex Standard信用点表，仅用于相对成本比较，不能换算套餐内剩余次数。结合输入、缓存输入、输出费率及预计上下文/输出长度；单位token便宜不保证整项任务便宜，反复失败的任务应提高能力和思考强度。",
     "候选能力依据账号下发说明和本次任务，不能仅凭模型版本号判断；相近能力优先低成本。新模型按同一规则评估，费率未知时优先已知成本且能胜任的候选；全部未知时按能力说明选择，不编造价格或能力分数。",
-    `明确排除的旧模型ID=${[...EXCLUDED_AUTO_MODELS].join(",")}；只从下面候选选，不按版本前缀排除未来模型。`,
+    "不要按模型版本或名称预先排除候选；只根据账号提供的能力说明、本次任务要求和实际费率选择。",
     "不要调用任何工具。只返回符合 schema 的 JSON。reason 不超过 20 个汉字。",
     `候选（支持的思考强度、费率、能力说明）：\n${candidates}`,
     recentContext ? `短上下文=${recentContext}` : "短上下文=(无)",
