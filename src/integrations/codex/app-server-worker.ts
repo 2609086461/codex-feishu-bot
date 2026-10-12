@@ -16,10 +16,12 @@ import { AppServerWsConnection } from "./app-server-ws-connection.js";
 import type { CodexTurnContext, CodexWorker } from "./codex-worker.js";
 import {
   buildRouterPrompt,
+  isAutoRoutableModel,
   isLiveSelectableModel,
   normalizeRouteDecision,
   pickRouterModel
 } from "./model-router.js";
+import { CodexPricingCatalog } from "./model-pricing.js";
 
 interface LoggerLike {
   info(message: unknown, ...args: unknown[]): void;
@@ -283,11 +285,19 @@ function buildSteerInput(context: CodexTurnContext) {
 
 export class CodexAppServerWorker implements CodexWorker {
   private child?: ChildProcessWithoutNullStreams;
+  private readonly pricing: CodexPricingCatalog;
 
   constructor(
     private readonly env: Env,
     private readonly logger?: LoggerLike
-  ) {}
+  ) {
+    this.pricing = new CodexPricingCatalog(
+      resolve(dirname(env.RUNTIME_STATE_FILE), "model-pricing.json"),
+      undefined,
+      undefined,
+      (message) => this.logger?.warn({ message }, "自动选模费率目录")
+    );
+  }
 
   getDefaultModel(): string {
     return this.env.CODEX_APP_SERVER_MODEL;
@@ -323,8 +333,9 @@ export class CodexAppServerWorker implements CodexWorker {
 
   async routeTurn(context: CodexTurnContext): Promise<CodexRouteDecision> {
     const models = await this.listModels();
-    const routerModel = pickRouterModel(models);
-    const fallback = normalizeRouteDecision({}, models);
+    const rates = await this.pricing.getRates();
+    const routerModel = pickRouterModel(models, rates);
+    const fallback = normalizeRouteDecision({}, models, rates);
     if (!routerModel) {
       return fallback;
     }
@@ -401,7 +412,8 @@ export class CodexAppServerWorker implements CodexWorker {
         context.message.text,
         recentContext,
         (context.message.attachments ?? []).map((attachment) => attachment.kind),
-        models
+        models,
+        rates
       );
       const started = await connection.request<TurnStartResponse>("turn/start", {
         threadId: routerThreadId,
@@ -420,7 +432,7 @@ export class CodexAppServerWorker implements CodexWorker {
           additionalProperties: false,
           required: ["model", "effort", "confidence", "reason"],
           properties: {
-            model: { type: "string", enum: models.map((model) => model.model) },
+            model: { type: "string", enum: models.filter(isAutoRoutableModel).map((model) => model.model) },
             effort: { type: "string", enum: ["low", "medium", "high", "xhigh", "max", "ultra"] },
             confidence: { type: "number", minimum: 0, maximum: 1 },
             reason: { type: "string", maxLength: 80 }
@@ -437,7 +449,7 @@ export class CodexAppServerWorker implements CodexWorker {
       ]);
 
       const jsonText = responseText.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-      const decision = normalizeRouteDecision(JSON.parse(jsonText), models);
+      const decision = normalizeRouteDecision(JSON.parse(jsonText), models, rates);
       this.logger?.info(
         {
           chatId: context.message.chatId,
